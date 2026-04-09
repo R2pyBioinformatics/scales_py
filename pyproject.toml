@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scales-py"
-version = "0.1.0"
+version = "1.4.0.9000-04fc333"
 description = "Python port of the R scales package — scale functions for visualization"
 requires-python = ">=3.10"
 license = "MIT"
