@@ -549,17 +549,30 @@ def pal_brewer(
         cmap_name = palette
 
     def _brewer_fun(n: int) -> list[str]:
+        from matplotlib.colors import ListedColormap
         try:
-            cmap = plt.get_cmap(cmap_name, n)
-        except ValueError:
             cmap = plt.get_cmap(cmap_name)
+        except ValueError:
+            cmap = plt.get_cmap(cmap_name, n)
+
+        # R semantics differ by palette type:
+        #  - Qualitative (Set1, Set2, ...): return first n from the
+        #    predefined colour list (ListedColormap, N ≤ 12).
+        #  - Sequential / Diverging: return n evenly-spaced samples.
+        if isinstance(cmap, ListedColormap) and cmap.N <= 20:
+            # Qualitative: first n colours
+            positions = [i / max(cmap.N - 1, 1) for i in range(n)]
+        else:
+            # Sequential / Diverging: evenly spaced
+            positions = [i / max(n - 1, 1) for i in range(n)]
+
         colours = [
             "#{:02X}{:02X}{:02X}".format(
                 int(round(c[0] * 255)),
                 int(round(c[1] * 255)),
                 int(round(c[2] * 255)),
             )
-            for c in [cmap(i / max(n - 1, 1)) for i in range(n)]
+            for c in [cmap(p) for p in positions]
         ]
         if direction == -1:
             colours = colours[::-1]
