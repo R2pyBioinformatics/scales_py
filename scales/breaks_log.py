@@ -15,6 +15,7 @@ from numpy.typing import ArrayLike
 
 __all__ = [
     "breaks_log",
+    "log_breaks",  # R alias: log_breaks <- breaks_log
     "minor_breaks_log",
 ]
 
@@ -220,3 +221,7 @@ def minor_breaks_log(
         return result
 
     return _minor_breaks
+
+
+# R alias: log_breaks <- breaks_log
+log_breaks = breaks_log

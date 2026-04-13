@@ -80,6 +80,7 @@ __all__ = [
     "date_trans",
     "time_trans",
     "timespan_trans",
+    "transform_hms",
     "hms_trans",
     "compose_trans",
     "is_trans",
@@ -1112,7 +1113,9 @@ def transform_timespan(unit: str = "secs") -> Transform:
 
 timespan_trans = transform_timespan
 
-# hms_trans is an alias for timespan (hours-minutes-seconds)
+# hms_trans / transform_hms are aliases for transform_timespan.
+# R: transform_hms wraps hms::as_hms; Python datetime handles this natively.
+transform_hms = transform_timespan
 hms_trans = transform_timespan
 
 

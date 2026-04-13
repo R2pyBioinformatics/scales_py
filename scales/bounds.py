@@ -28,6 +28,7 @@ __all__ = [
     "oob_keep",
     "oob_discard",
     "trim_to_domain",
+    "trans_range",  # R alias: trans_range <- trim_to_domain
 ]
 
 # ---------------------------------------------------------------------------
@@ -494,3 +495,7 @@ def trim_to_domain(
     forwarded = np.asarray(transform.transform(x), dtype=np.float64)
     x[~np.isfinite(forwarded)] = np.nan
     return x
+
+
+# R alias: trans_range <- trim_to_domain
+trans_range = trim_to_domain

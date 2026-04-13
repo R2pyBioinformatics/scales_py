@@ -70,6 +70,7 @@ __all__ = [
     "oob_keep",
     "oob_discard",
     "trim_to_domain",
+    "trans_range",      # R alias: trans_range <- trim_to_domain
     # transforms – core API
     "Transform",
     "new_transform",
@@ -125,6 +126,7 @@ __all__ = [
     "date_trans",
     "time_trans",
     "timespan_trans",
+    "transform_hms",
     "hms_trans",
     "compose_trans",
     "is_trans",
@@ -140,6 +142,7 @@ __all__ = [
     "pretty_breaks",
     # breaks_log
     "breaks_log",
+    "log_breaks",       # R alias: log_breaks <- breaks_log
     "minor_breaks_log",
     # minor_breaks
     "minor_breaks_n",
