@@ -10,12 +10,11 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "numpy>=1.24",
-    "matplotlib>=3.6",
-    "pandas>=1.5",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "ruff"]
+plot = ["matplotlib>=3.6"]
+dev = ["pytest", "pytest-cov", "ruff", "matplotlib>=3.6"]
 docs = ["mkdocs", "mkdocstrings[python]", "mkdocs-material", "mkdocs-jupyter"]
 
 [tool.hatch.build.targets.wheel]

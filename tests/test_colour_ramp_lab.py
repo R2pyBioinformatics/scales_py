@@ -9,7 +9,7 @@ import pytest
 
 from scales import colour_ramp, pal_gradient_n, pal_div_gradient, pal_seq_gradient
 from scales.colour_manip import _rgb_to_lab
-from matplotlib.colors import to_rgba
+from scales._colors import to_rgba
 
 
 # ---------------------------------------------------------------------------

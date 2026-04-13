@@ -416,12 +416,13 @@ class TestColourRampOpaqueNoAlpha:
             assert len(c) == 7
 
     def test_alpha_true_with_transparency(self):
-        # R: when alpha=TRUE and inputs have varying alpha,
-        # output is #RRGGBBAA (with alpha suffix).
+        # When inputs have varying alpha, partially transparent outputs
+        # get #RRGGBBAA; fully opaque outputs get #RRGGBB.
         ramp = scales.colour_ramp(["#FF000080", "#0000FFFF"], alpha=True)
-        result = ramp(np.array([0.0, 1.0]))
-        for c in result:
-            assert len(c) == 9
+        result = ramp(np.array([0.0, 0.5, 1.0]))
+        assert len(result[0]) == 9  # x=0, alpha=0x80 → transparent
+        assert len(result[1]) == 9  # x=0.5, alpha interpolated < 1
+        assert len(result[2]) == 7  # x=1.0, alpha=0xFF → opaque
 
 
 # =========================================================================

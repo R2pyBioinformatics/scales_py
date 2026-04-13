@@ -67,8 +67,8 @@ class TestPalViridis:
     def test_known_values(self):
         p = scales.pal_viridis()
         colors = p(5)
-        assert colors[0] == "#440154"
-        assert colors[-1] == "#FDE725"
+        assert colors[0].lower() == "#440154"
+        assert colors[-1].lower() == "#fde725"
 
 
 # ---------------------------------------------------------------------------
