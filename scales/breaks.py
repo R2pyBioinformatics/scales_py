@@ -52,24 +52,38 @@ def _simplicity_max(q_idx: int, n_Q: int, j: int) -> float:
 
 
 def _coverage(dmin: float, dmax: float, lmin: float, lmax: float) -> float:
-    """Coverage score – how well the labels cover the data range."""
+    """Coverage score – how well the labels cover the data range.
+
+    R (labeling::.coverage):
+        1 - 0.5 * ((dmax - lmax)^2 + (dmin - lmin)^2) / (0.1*(dmax-dmin))^2
+
+    Note the denominator factor is ``0.1`` — **not** ``0.5`` — which
+    makes the penalty for label overshoot far more severe.  With 0.5,
+    candidates that extend well beyond the data range appear almost
+    as good as tight ones, causing the algorithm to prefer
+    ``[0,10,20,30,40]`` over ``[10,15,...,35]`` for data in ``[9,35]``.
+    """
     data_range = dmax - dmin
     if data_range < 1e-100:
         return 1.0
-    half = 0.5 * data_range
+    tenth = 0.1 * data_range
     return (1.0
             - 0.5 * ((dmax - lmax) ** 2 + (dmin - lmin) ** 2)
-            / (half ** 2))
+            / (tenth ** 2))
 
 
 def _coverage_max(dmin: float, dmax: float, span: float) -> float:
-    """Upper bound on coverage for a given label span."""
+    """Upper bound on coverage for a given label span.
+
+    R (labeling::.coverage.max) uses the same ``0.1 * range``
+    denominator as :func:`_coverage`.
+    """
     data_range = dmax - dmin
     if data_range < 1e-100:
         return 1.0
     if span >= data_range:
-        half = 0.5 * data_range
-        return 1.0 - 0.5 * ((span - data_range) ** 2) / (half ** 2)
+        tenth = 0.1 * data_range
+        return 1.0 - 0.5 * ((span - data_range) ** 2) / (tenth ** 2)
     return 1.0
 
 
