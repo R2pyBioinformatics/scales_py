@@ -24,6 +24,9 @@ from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 import numpy as np
 from numpy.typing import ArrayLike
 
+from .breaks import breaks_extended
+from .minor_breaks import regular_minor_breaks
+
 __all__ = [
     # Core API
     "Transform",
@@ -93,21 +96,17 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 def _pretty_breaks(n: int = 5) -> Callable:
-    """Return a break-generator that picks *n* \"pretty\" breaks.
+    """Return a break-generator using Wilkinson's extended algorithm.
 
-    Uses :func:`numpy.linspace` rounded to nice numbers via
-    ``matplotlib.ticker`` if available, otherwise a simple ``linspace``.
+    Mirrors R's ``new_transform`` default
+    ``breaks = extended_breaks()`` — i.e. ``labeling::extended`` in R,
+    :func:`breaks_extended` here.  Pure-numpy; no matplotlib dependency.
     """
+    extended = breaks_extended(n=n)
+
     def _breaks(limits: Tuple[float, float]) -> np.ndarray:
-        lo, hi = float(limits[0]), float(limits[1])
-        if not np.isfinite(lo) or not np.isfinite(hi) or lo == hi:
-            return np.array([lo])
-        try:
-            from matplotlib.ticker import MaxNLocator
-            locator = MaxNLocator(nbins=n, steps=[1, 2, 2.5, 5, 10])
-            return np.asarray(locator.tick_values(lo, hi))
-        except ImportError:
-            return np.linspace(lo, hi, n)
+        return extended(np.asarray(limits, dtype=float))
+
     return _breaks
 
 
@@ -208,10 +207,18 @@ class Transform:
     # Convenience: call the forward / inverse directly
     def transform(self, x: ArrayLike) -> np.ndarray:
         """Apply the forward transformation."""
+        arr = np.asarray(x)
+        # Pass string / object / timedelta64 / datetime64 arrays through
+        # unchanged — transforms like hms / date parse them themselves.
+        if arr.dtype.kind in ("U", "S", "O", "m", "M"):
+            return np.asarray(self.transform_func(arr))
         return np.asarray(self.transform_func(np.asarray(x, dtype=float)))
 
     def inverse(self, x: ArrayLike) -> np.ndarray:
         """Apply the inverse transformation."""
+        arr = np.asarray(x)
+        if arr.dtype.kind in ("U", "S", "O", "m", "M"):
+            return np.asarray(self.inverse_func(arr))
         return np.asarray(self.inverse_func(np.asarray(x, dtype=float)))
 
     def __repr__(self) -> str:
@@ -590,13 +597,20 @@ sqrt_trans = transform_sqrt
 # ---------------------------------------------------------------------------
 
 def transform_reverse() -> Transform:
-    """Negate values (reverse the axis direction)."""
+    """Negate values (reverse the axis direction).
+
+    Matches R's ``transform_reverse``: uses
+    ``regular_minor_breaks(reverse=True)`` so minor ticks extend toward
+    the numerically *smaller* side of each major, suitable for reversed
+    axes.
+    """
     return new_transform(
         name="reverse",
         transform=lambda x: -x,
         inverse=lambda x: -x,
         d_transform=lambda x: np.full_like(np.asarray(x, dtype=float), -1.0),
         d_inverse=lambda x: np.full_like(np.asarray(x, dtype=float), -1.0),
+        minor_breaks=regular_minor_breaks(reverse=True),
     )
 
 
@@ -835,9 +849,9 @@ def transform_yj(p: float) -> Transform:
         if p != 2:
             out[neg] = 1.0 - (-(2.0 - p) * x[neg] + 1.0) ** (1.0 / (2.0 - p))
         else:
+            # Matches R's inv_neg(x) = 1 - exp(-x). For x < 0, exp(-x) > 1,
+            # so the expression is already ≤ 0 — no sign patch needed.
             out[neg] = 1.0 - np.exp(-x[neg])
-            # Negate because for x < 0 the original is negative
-            out[neg] = -np.abs(out[neg])
 
         return out
 
@@ -898,7 +912,12 @@ pseudo_log_trans = transform_pseudo_log
 def transform_probability(
     distribution: str, *args: Any, **kwargs: Any
 ) -> Transform:
-    """Probability-integral transform using a ``scipy.stats`` distribution.
+    """Probability transform using a ``scipy.stats`` distribution.
+
+    Mirrors R's ``scales::transform_probability``: forward is the
+    quantile function (``q<dist>`` / ``ppf``), inverse is the CDF
+    (``p<dist>`` / ``cdf``).  ``d_transform`` is ``1 / pdf(ppf(x))`` and
+    ``d_inverse`` is ``pdf(x)``.
 
     Parameters
     ----------
@@ -912,7 +931,6 @@ def transform_probability(
     Returns
     -------
     Transform
-        Forward = CDF, inverse = PPF (quantile function).
         Domain ``(0, 1)``.
     """
     try:
@@ -926,9 +944,11 @@ def transform_probability(
     dist = getattr(st, distribution)(*args, **kwargs)
 
     return new_transform(
-        name=f"probability-{distribution}",
-        transform=lambda x: dist.cdf(x),
-        inverse=lambda x: dist.ppf(x),
+        name=f"prob-{distribution}",
+        transform=lambda x: dist.ppf(x),
+        inverse=lambda x: dist.cdf(x),
+        d_transform=lambda x: 1.0 / dist.pdf(dist.ppf(x)),
+        d_inverse=lambda x: dist.pdf(x),
         domain=(0, 1),
     )
 
@@ -1113,10 +1133,98 @@ def transform_timespan(unit: str = "secs") -> Transform:
 
 timespan_trans = transform_timespan
 
-# hms_trans / transform_hms are aliases for transform_timespan.
-# R: transform_hms wraps hms::as_hms; Python datetime handles this natively.
-transform_hms = transform_timespan
-hms_trans = transform_timespan
+
+def transform_hms() -> Transform:
+    """Transform clock-time values to/from numeric seconds.
+
+    Mirrors R's ``transform_hms``: forward drops to raw seconds, inverse
+    converts back to an ``"HH:MM:SS"`` string (R uses the ``hms`` class;
+    Python uses a plain string, which is the natural stdlib equivalent).
+
+    Accepted forward inputs:
+
+    * ``float`` / ``int`` — already seconds, returned unchanged.
+    * ``numpy.timedelta64`` — converted to seconds.
+    * ``datetime.time`` — converted via its hour/minute/second fields.
+    * ``str`` in ``"HH:MM:SS"`` or ``"HH:MM:SS.fff"`` — parsed.
+
+    Inverse always returns ``"HH:MM:SS"`` strings, wrapping past 24 h.
+    """
+    import re
+    from datetime import time as _time
+
+    _pat = re.compile(r"^(\d+):(\d{1,2})(?::(\d{1,2}(?:\.\d+)?))?$")
+
+    def _to_seconds(val: Any) -> float:
+        if val is None:
+            return np.nan
+        if isinstance(val, (int, float, np.integer, np.floating)):
+            return float(val)
+        if isinstance(val, np.timedelta64):
+            return val / np.timedelta64(1, "s")
+        if isinstance(val, _time):
+            return (
+                val.hour * 3600
+                + val.minute * 60
+                + val.second
+                + val.microsecond / 1_000_000
+            )
+        if isinstance(val, str):
+            m = _pat.match(val.strip())
+            if not m:
+                raise ValueError(f"cannot parse {val!r} as HH:MM:SS")
+            h = int(m.group(1))
+            mm = int(m.group(2))
+            ss = float(m.group(3) or 0.0)
+            return h * 3600 + mm * 60 + ss
+        # Last resort: try array
+        return float(val)
+
+    def _fwd(x: ArrayLike) -> np.ndarray:
+        arr = np.asarray(x)
+        if np.issubdtype(arr.dtype, np.timedelta64):
+            # timedelta64 arrays → seconds (float). Division by
+            # np.timedelta64(1, "s") returns a float array even for
+            # non-integer-second inputs (microsecond precision kept).
+            return (arr / np.timedelta64(1, "s")).astype(float)
+        if arr.dtype.kind in ("i", "u", "f"):
+            return arr.astype(float)
+        # Object / string arrays — convert element-wise.
+        out = np.empty(arr.shape, dtype=float)
+        for idx, v in np.ndenumerate(arr):
+            out[idx] = _to_seconds(v)
+        return out
+
+    def _inv(x: ArrayLike) -> np.ndarray:
+        arr = np.asarray(x, dtype=float)
+        out: list[str] = []
+        for v in arr.flat:
+            if not np.isfinite(v):
+                out.append("NA")
+                continue
+            total = float(v)
+            sign = "-" if total < 0 else ""
+            total = abs(total)
+            h = int(total // 3600)
+            rem = total - h * 3600
+            m = int(rem // 60)
+            s = rem - m * 60
+            # Render as HH:MM:SS; seconds keep fractional part when non-zero.
+            if abs(s - round(s)) < 1e-9:
+                out.append(f"{sign}{h:02d}:{m:02d}:{int(round(s)):02d}")
+            else:
+                out.append(f"{sign}{h:02d}:{m:02d}:{s:06.3f}")
+        return np.array(out, dtype=object).reshape(arr.shape)
+
+    return Transform(
+        name="hms",
+        transform_func=_fwd,
+        inverse_func=_inv,
+        domain=(-np.inf, np.inf),
+    )
+
+
+hms_trans = transform_hms
 
 
 # ---------------------------------------------------------------------------
@@ -1126,40 +1234,103 @@ hms_trans = transform_timespan
 def transform_compose(*transforms: Union[str, Transform]) -> Transform:
     """Compose multiple transforms (applied left to right).
 
+    Faithful port of R's ``scales::transform_compose``:
+
+    * Resolves a conservative domain by pushing the first transform's
+      domain forward through the sequence (intersecting with each
+      transform's own domain at every step) to get the range, then
+      pulling that range back through the inverses.
+    * Composes ``d_transform`` and ``d_inverse`` via the chain rule when
+      *every* transform exposes them; otherwise the composed derivatives
+      are ``None``.
+    * Uses the first transform's ``breaks_func`` for tick generation.
+
     Parameters
     ----------
     *transforms : str or Transform
-        Two or more transforms to compose.  Strings are resolved via
+        One or more transforms to compose.  Strings are resolved via
         :func:`as_transform`.
 
     Returns
     -------
     Transform
-        A composite transform whose forward function applies each
-        transform in order and whose inverse applies the inverses in
-        reverse order.
     """
     ts = [as_transform(t) for t in transforms]
     if len(ts) < 1:
-        raise ValueError("transform_compose requires at least one transform")
-
-    names = " -> ".join(t.name for t in ts)
-
-    def _fwd(x: np.ndarray) -> np.ndarray:
-        return reduce(lambda v, t: t.transform(v), ts, np.asarray(x, dtype=float))
-
-    def _inv(x: np.ndarray) -> np.ndarray:
-        return reduce(
-            lambda v, t: t.inverse(v), reversed(ts), np.asarray(x, dtype=float)
+        raise ValueError(
+            "transform_compose must include at least 1 transformer to compose"
         )
 
-    # Domain comes from the first transform
-    domain = ts[0].domain
+    def _fwd(x: ArrayLike) -> np.ndarray:
+        v = np.asarray(x, dtype=float)
+        for t in ts:
+            v = t.transform(v)
+        return v
+
+    def _inv(x: ArrayLike) -> np.ndarray:
+        v = np.asarray(x, dtype=float)
+        for t in reversed(ts):
+            v = t.inverse(v)
+        return v
+
+    # Domain resolution — matches R's algorithm exactly.
+    t0 = ts[0]
+    rng = np.asarray(
+        t0.transform(np.asarray(t0.domain, dtype=float)), dtype=float
+    )
+    for t in ts[1:]:
+        d_lo, d_hi = float(t.domain[0]), float(t.domain[1])
+        r_lo, r_hi = float(np.min(rng)), float(np.max(rng))
+        lower = max(d_lo, r_lo)
+        upper = min(d_hi, r_hi)
+        if lower <= upper:
+            rng = np.asarray(
+                t.transform(np.asarray([lower, upper], dtype=float)), dtype=float
+            )
+        else:
+            rng = np.array([np.nan, np.nan])
+            break
+
+    # Push range back through inverses to derive composed domain.
+    dom_vals = rng
+    for t in reversed(ts):
+        dom_vals = np.asarray(t.inverse(np.asarray(dom_vals, dtype=float)), dtype=float)
+
+    if np.any(np.isnan(dom_vals)):
+        raise ValueError("Sequence of transformations yields invalid domain")
+    domain = (float(np.min(dom_vals)), float(np.max(dom_vals)))
+
+    has_d_transform = all(t.d_transform is not None for t in ts)
+    has_d_inverse = all(t.d_inverse is not None for t in ts)
+
+    def _d_fwd(x: ArrayLike) -> np.ndarray:
+        # Forward chain rule: derivative = prod_i f'_i(x_i) where x_i is
+        # the value fed into the i-th transform.
+        v = np.asarray(x, dtype=float)
+        deriv = np.ones_like(v, dtype=float)
+        for t in ts:
+            deriv = np.asarray(t.d_transform(v), dtype=float) * deriv
+            v = t.transform(v)
+        return deriv
+
+    def _d_inv(x: ArrayLike) -> np.ndarray:
+        # Inverse chain rule: apply inverses in reverse order.
+        v = np.asarray(x, dtype=float)
+        deriv = np.ones_like(v, dtype=float)
+        for t in reversed(ts):
+            deriv = np.asarray(t.d_inverse(v), dtype=float) * deriv
+            v = t.inverse(v)
+        return deriv
+
+    names = ",".join(t.name for t in ts)
 
     return new_transform(
-        name=f"compose({names})",
+        name=f"composition({names})",
         transform=_fwd,
         inverse=_inv,
+        d_transform=_d_fwd if has_d_transform else None,
+        d_inverse=_d_inv if has_d_inverse else None,
+        breaks=t0.breaks_func,
         domain=domain,
     )
 

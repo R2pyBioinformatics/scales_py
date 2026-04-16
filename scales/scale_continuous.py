@@ -12,7 +12,7 @@ from typing import Any, Callable, Optional, Tuple, Union
 import numpy as np
 from numpy.typing import ArrayLike
 
-from .bounds import rescale
+from .bounds import censor, rescale
 from .transforms import Transform, as_transform
 
 __all__ = [
@@ -26,12 +26,14 @@ def cscale(
     palette: Callable[[np.ndarray], np.ndarray],
     na_value: Any = np.nan,
     trans: Optional[Union[Transform, str]] = None,
+    oob: Callable[[np.ndarray], np.ndarray] = censor,
 ) -> np.ndarray:
     """Apply a continuous scale to numeric data.
 
-    This is the low-level workhorse behind ggplot2's continuous scale
-    machinery.  It rescales *x* to ``[0, 1]``, passes the result through
-    *palette*, and replaces ``NaN`` entries with *na_value*.
+    Mirrors R's ``cscale`` + ``map_continuous``: transforms *x*, rescales
+    to ``[0, 1]``, applies *oob* (censor by default) to that rescaled
+    result, then passes it through *palette*.  NaNs (including those
+    introduced by *oob*) are replaced with *na_value*.
 
     Parameters
     ----------
@@ -46,6 +48,12 @@ def cscale(
         If given, *x* is first transformed before rescaling.  May be a
         :class:`~scales.transforms.Transform` object or a string name
         recognised by :func:`~scales.transforms.as_transform`.
+    oob : callable, optional
+        Out-of-bounds handler applied to the rescaled ``[0, 1]`` values
+        before the palette.  Default is :func:`~scales.bounds.censor`,
+        which replaces values outside ``[0, 1]`` with ``NaN`` — matching
+        R's ``map_continuous(oob = censor)``.  Use
+        :func:`~scales.bounds.squish` to clamp instead.
 
     Returns
     -------
@@ -71,11 +79,16 @@ def cscale(
     # 3. Rescale to [0, 1] using the finite range of x
     scaled = rescale(x, to=(0.0, 1.0))
 
-    # 4. Apply palette
+    # 4. Apply OOB handler (default: censor → NaN). After this, any value
+    #    outside [0, 1] that the user asked to censor becomes NaN.
+    scaled = np.asarray(oob(scaled), dtype=float)
+    na_mask = na_mask | ~np.isfinite(scaled)
+
+    # 5. Apply palette
     result = palette(scaled)
     result = np.asarray(result)
 
-    # 5. Replace NAs
+    # 6. Replace NAs
     if np.any(na_mask):
         if result.dtype.kind in ("U", "S", "O"):
             # String / object array

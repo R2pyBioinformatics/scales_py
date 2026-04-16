@@ -488,7 +488,8 @@ class TestTransformCompose:
         y = t.transform(x)
         x_back = t.inverse(y)
         assert np.allclose(x, x_back, atol=1e-6)
-        assert "compose" in t.name
+        # R names composed transforms "composition(t1,t2,...)".
+        assert t.name.startswith("composition(")
 
     def test_empty(self):
         with pytest.raises(ValueError):
@@ -570,7 +571,9 @@ class TestLegacyAliases:
         assert timespan_trans is transform_timespan
 
     def test_hms_trans(self):
-        assert hms_trans is transform_timespan
+        # Per R, hms_trans is an alias of transform_hms (not timespan).
+        from scales.transforms import transform_hms
+        assert hms_trans is transform_hms
 
     def test_compose_trans(self):
         assert compose_trans is transform_compose

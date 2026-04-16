@@ -11,6 +11,8 @@ from typing import Optional, Tuple, Union
 
 import numpy as np
 
+from ._utils import zero_range
+
 __all__ = [
     "rescale",
     "rescale_mid",
@@ -136,20 +138,18 @@ def rescale_mid(
 
     from_min, from_max = float(from_range[0]), float(from_range[1])
     to_min, to_max = float(to[0]), float(to[1])
-    to_mid = (to_min + to_max) / 2.0
 
-    extent = max(abs(from_max - mid), abs(from_min - mid))
-    # Two linear segments: below mid and above mid
-    result = np.where(
-        x_num <= mid,
-        (x_num - from_min) / (mid - from_min) * (to_mid - to_min) + to_min
-        if mid != from_min
-        else np.full_like(x_num, to_mid),
-        (x_num - mid) / (from_max - mid) * (to_max - to_mid) + to_mid
-        if from_max != mid
-        else np.full_like(x_num, to_mid),
-    )
-    return result
+    # Mirrors R's rescale_mid.numeric:
+    #   if (zero_range(from) || zero_range(to)) return mean(to) for non-NA
+    #   extent <- 2 * max(abs(from - mid))
+    #   (x - mid) / extent * diff(to) + mean(to)
+    to_mean = (to_min + to_max) / 2.0
+    if zero_range((from_min, from_max)) or zero_range((to_min, to_max)):
+        result = np.where(np.isnan(x_num), np.nan, to_mean)
+        return result
+
+    extent = 2.0 * max(abs(from_min - mid), abs(from_max - mid))
+    return (x_num - mid) / extent * (to_max - to_min) + to_mean
 
 
 def rescale_max(
@@ -471,30 +471,41 @@ def trim_to_domain(
     transform: object,
     x: Union[np.ndarray, list, float],
 ) -> np.ndarray:
-    """Trim *x* to the domain of *transform*.
+    """Compute the **transformed range** of *x*, clipped to the transform's domain.
 
-    Applies the forward transformation, replaces any non-finite results
-    (which indicate values outside the transform's valid domain) with
-    ``np.nan``, and then applies the inverse to map back.
+    Mirrors R's ``trim_to_domain``:
+    ``range(transform$transform(range(squish(x, transform$domain), na.rm = TRUE)))``.
+
+    The return shape is **always a length-2 array**: the (min, max) of the
+    transformed, domain-squished data.
 
     Parameters
     ----------
     transform : object
-        A transform object that exposes ``transform(x)`` and
-        ``inverse(x)`` methods (following the convention used by the
-        ``scales`` package).
+        A transform object exposing ``transform(x)`` and a ``domain``
+        ``(min, max)`` tuple.
     x : array_like
-        Values to trim.
+        Values to summarise.
 
     Returns
     -------
     np.ndarray
-        *x* with values outside the valid domain replaced by ``np.nan``.
+        Length-2 array ``[trans_min, trans_max]``.
     """
-    x = np.array(_ensure_array(x), dtype=np.float64)
-    forwarded = np.asarray(transform.transform(x), dtype=np.float64)
-    x[~np.isfinite(forwarded)] = np.nan
-    return x
+    x_arr = np.array(_ensure_array(x), dtype=np.float64)
+    # Accept both string-named transforms and transform objects. If the
+    # object exposes a `domain` attribute, use it; otherwise assume the
+    # whole real line.
+    domain = getattr(transform, "domain", (-np.inf, np.inf))
+    squished = squish(x_arr, range=domain, only_finite=True)
+    finite = squished[np.isfinite(squished)]
+    if finite.size == 0:
+        return np.array([np.nan, np.nan], dtype=float)
+    raw_range = np.array([finite.min(), finite.max()], dtype=float)
+    transformed = np.asarray(transform.transform(raw_range), dtype=float)
+    if transformed.size == 0 or np.all(~np.isfinite(transformed)):
+        return np.array([np.nan, np.nan], dtype=float)
+    return np.array([float(np.nanmin(transformed)), float(np.nanmax(transformed))])
 
 
 # R alias: trans_range <- trim_to_domain

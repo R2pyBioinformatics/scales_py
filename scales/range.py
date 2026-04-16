@@ -94,18 +94,24 @@ class ContinuousRange(Range):
 class DiscreteRange(Range):
     """Mutable discrete range (ordered set of unique levels).
 
-    Accumulates factor / categorical levels across multiple ``train()``
-    calls, preserving order of first appearance.
+    Mirrors R ``scales::discrete_range`` / ``clevels``
+    (scales/R/scale-discrete.R:55-116):
+
+    * If the input is a pandas Categorical (R factor), its ``categories``
+      order is preserved.
+    * Otherwise, levels are **sorted alphabetically** (R ``sort(unique(x))``).
+    * When combined with an existing range, a factor input keeps its
+      order; a non-factor combination is re-sorted.
 
     Examples
     --------
     >>> rng = DiscreteRange()
     >>> rng.train(["b", "a", "c"])
     >>> rng.range
-    ['b', 'a', 'c']
+    ['a', 'b', 'c']
     >>> rng.train(["d", "a"])
     >>> rng.range
-    ['b', 'a', 'c', 'd']
+    ['a', 'b', 'c', 'd']
     """
 
     def __init__(self) -> None:
@@ -125,7 +131,9 @@ class DiscreteRange(Range):
         ----------
         x : array_like or pandas.Categorical
             Discrete values.  If *x* is a :class:`pandas.Categorical`
-            its categories are used (respecting order).
+            its categories are used (respecting order).  Otherwise,
+            the unique values are sorted alphabetically to match R's
+            ``sort(unique(x))`` behaviour in ``clevels()``.
         drop : bool, optional
             If ``True`` and *x* is categorical, unused categories are
             dropped before training (default ``False``).
@@ -133,25 +141,37 @@ class DiscreteRange(Range):
             If ``True``, ``None`` / ``NaN`` values are removed before
             training (default ``False``).
         """
-        # Handle pandas Categoricals
-        if hasattr(x, "categories"):
-            self._is_factor = True
+        new_is_factor = hasattr(x, "categories")
+        # Handle pandas Categoricals — factor-style, preserve order.
+        if new_is_factor:
             if drop:
                 x = x.remove_unused_categories()
             levels = list(x.categories)
         else:
             x = np.asarray(x)
-            # Build unique list preserving first-appearance order
+            # R's clevels for non-factor: sort(unique(x))
             seen: set = set()
-            levels: list = []
+            uniq: list = []
             for val in x.flat:
                 key = val
-                # Treat np.nan consistently
                 if isinstance(val, float) and np.isnan(val):
                     key = None
                 if key not in seen:
                     seen.add(key)
-                    levels.append(val)
+                    uniq.append(val)
+            # Sort alphabetically (R default).  Keep NaN separate —
+            # sorted() will raise on mixed None/str, so we strip first
+            # and re-append.
+            non_na = [v for v in uniq if not (v is None or
+                        (isinstance(v, float) and np.isnan(v)))]
+            na_tail = [v for v in uniq if v is None or
+                        (isinstance(v, float) and np.isnan(v))]
+            try:
+                non_na = sorted(non_na)
+            except TypeError:
+                # Mixed incomparable types — keep insertion order
+                pass
+            levels = non_na + na_tail
 
         # Optionally strip NaN / None
         if na_rm:
@@ -162,21 +182,40 @@ class DiscreteRange(Range):
             ]
 
         if self.range is None:
+            # First batch — remember whether it was a factor.
             self.range = levels
+            self._is_factor = new_is_factor
         else:
+            # Combine with existing range.  R discrete_range
+            # (scale-discrete.R:82-96): union of old ∪ new_levels.
+            # Keep factor order if either side was a factor; else
+            # re-sort alphabetically.
             existing_set = set()
             for v in self.range:
                 if isinstance(v, float) and np.isnan(v):
                     existing_set.add(None)
                 else:
                     existing_set.add(v)
-            new_levels = list(self.range)
+            combined = list(self.range)
             for v in levels:
                 key = None if (isinstance(v, float) and np.isnan(v)) else v
                 if key not in existing_set:
                     existing_set.add(key)
-                    new_levels.append(v)
-            self.range = new_levels
+                    combined.append(v)
+
+            if self._is_factor or new_is_factor:
+                self.range = combined
+                self._is_factor = True
+            else:
+                non_na = [v for v in combined if not (v is None or
+                            (isinstance(v, float) and np.isnan(v)))]
+                na_tail = [v for v in combined if v is None or
+                            (isinstance(v, float) and np.isnan(v))]
+                try:
+                    non_na = sorted(non_na)
+                except TypeError:
+                    pass
+                self.range = non_na + na_tail
 
     def reset(self) -> None:
         """Reset to an empty range."""

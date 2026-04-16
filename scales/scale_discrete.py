@@ -130,28 +130,36 @@ def train_discrete(
     >>> train_discrete(["b", "d"], existing=["a", "b", "c"])
     ['a', 'b', 'c', 'd']
     """
-    # Extract levels from new data
-    if hasattr(new, "categories"):
+    # Extract levels from new data.
+    # R semantics: non-factor input is `sort(unique(...))`; Categorical
+    # (factor) input preserves its defined order.
+    existing_is_factor = hasattr(existing, "categories")
+    new_is_factor = hasattr(new, "categories")
+
+    if new_is_factor:
         if drop:
             new = new.remove_unused_categories()
         new_levels = list(new.categories)
     else:
         arr = np.asarray(new)
         seen: set = set()
-        new_levels: list = []
+        uniq: list = []
         for val in arr.flat:
             key = _na_key(val)
             if key not in seen:
                 seen.add(key)
-                new_levels.append(val)
+                uniq.append(val)
+        new_levels = uniq
 
     if na_rm:
         new_levels = [v for v in new_levels if not _is_na(v)]
 
     if existing is None:
-        return new_levels
+        if new_is_factor:
+            return new_levels
+        # Non-factor: sort alphabetically per R's clevels().
+        return sorted(new_levels, key=lambda v: (v is None, str(v)))
 
-    # Merge: keep existing order, append truly new levels
     existing_keys = {_na_key(v) for v in existing}
     merged = list(existing)
     for v in new_levels:
@@ -159,6 +167,10 @@ def train_discrete(
         if key not in existing_keys:
             existing_keys.add(key)
             merged.append(v)
+
+    # When neither side is a factor, R re-sorts the union.
+    if not (existing_is_factor or new_is_factor):
+        merged = sorted(merged, key=lambda v: (v is None, str(v)))
 
     return merged
 

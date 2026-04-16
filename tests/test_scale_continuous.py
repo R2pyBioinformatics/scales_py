@@ -136,10 +136,10 @@ class TestTrainDiscrete:
         assert "b" in result or any(str(x) == "b" for x in result)
         assert "c" in result or any(str(x) == "c" for x in result)
 
-    def test_preserves_order(self):
+    def test_sorted_union(self):
+        # R: non-factor union is `sort(unique(c(existing, new)))`.
         result = scales.train_discrete(["a", "b"], existing=["c"])
-        # Existing should come first
-        assert str(result[0]) == "c"
+        assert list(map(str, result)) == ["a", "b", "c"]
 
     def test_no_duplicates(self):
         result = scales.train_discrete(["a", "b", "a"], existing=["b"])
@@ -190,15 +190,17 @@ class TestContinuousRange:
 
 class TestDiscreteRange:
     def test_basic(self):
+        # Mirrors R's discrete_range: non-factor input is sorted
+        # alphabetically via `sort(unique(x))`.
         rng = scales.DiscreteRange()
         rng.train(["b", "a", "c"])
-        assert rng.range == ["b", "a", "c"]
+        assert list(rng.range) == ["a", "b", "c"]
 
     def test_progressive_training(self):
         rng = scales.DiscreteRange()
         rng.train(["b", "a", "c"])
         rng.train(["d", "a"])
-        assert rng.range == ["b", "a", "c", "d"]
+        assert list(rng.range) == ["a", "b", "c", "d"]
 
     def test_reset(self):
         rng = scales.DiscreteRange()
@@ -207,12 +209,11 @@ class TestDiscreteRange:
         rng.train(["x", "y"])
         assert rng.range == ["x", "y"]
 
-    def test_preserves_order(self):
+    def test_sorted_order(self):
+        # R: `sort(unique(x))` on non-factor input.
         rng = scales.DiscreteRange()
         rng.train(["c", "a", "b"])
-        assert rng.range[0] == "c"
-        assert rng.range[1] == "a"
-        assert rng.range[2] == "b"
+        assert list(rng.range) == ["a", "b", "c"]
 
 
 # ---------------------------------------------------------------------------

@@ -189,13 +189,18 @@ class TestBoundsEdge:
 
 class TestTrimToDomain:
     def test_basic(self):
+        # Mirrors R's trim_to_domain: returns the transformed range after
+        # squishing x into the transform's domain. For log10 with domain
+        # (0, inf): squish([-1, 0, 1, 10, 100]) -> [0, 0, 1, 10, 100],
+        # then range() -> [0, 100], then log10 -> [-inf, 2]. The -inf
+        # is the transformed image of the lower boundary, which the
+        # tests above accept as-is per R behaviour.
         from scales.transforms import transform_log10
         t = transform_log10()
         result = trim_to_domain(t, [-1, 0, 1, 10, 100])
-        # Negative values and zero should be NaN for log10
-        assert np.isnan(result[0])
-        assert np.isnan(result[1])
-        assert result[4] == pytest.approx(100)
+        assert result.shape == (2,)
+        # Upper end is log10(100) = 2.
+        assert result[1] == pytest.approx(2.0)
 
 
 # ===========================================================================

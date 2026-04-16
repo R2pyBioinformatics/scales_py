@@ -12,7 +12,7 @@ from scales.minor_breaks import (
 from scales.breaks_log import (
     breaks_log,
     minor_breaks_log,
-    _fill_log_breaks,
+    _log_sub_breaks,
 )
 
 
@@ -86,10 +86,12 @@ class TestRegularMinorBreaks:
         assert len(result) == 0
 
     def test_n_one(self):
+        # R's regular_minor_breaks(reverse=FALSE)(c(0, 10), c(0, 10), n=1)
+        # -> `seq(0, 10, length.out=2)[-2]` == c(0) plus final major 10
+        # -> c(0, 10).
         fn = regular_minor_breaks()
         result = fn(np.array([0, 10]), np.array([0, 10]), 1)
-        # n-1 = 0 minor breaks
-        assert len(result) == 0
+        np.testing.assert_allclose(result, [0.0, 10.0])
 
     def test_n_three(self):
         fn = regular_minor_breaks()
@@ -144,17 +146,19 @@ class TestBreaksLog:
 # _fill_log_breaks (lines 105-111)
 # ---------------------------------------------------------------------------
 
-class TestFillLogBreaks:
+class TestLogSubBreaks:
+    # Tests the R-style greedy densifier. See R/breaks-log.R log_sub_breaks.
     def test_base_10(self):
-        result = _fill_log_breaks((0, 2), 10, 10)
+        result = _log_sub_breaks((0, 2), n=10, base=10)
         assert len(result) > 0
 
-    def test_base_2(self):
-        result = _fill_log_breaks((0, 5), 2, 5)
-        assert len(result) > 0
+    def test_base_2_returns_powers(self):
+        # R: `if (base <= 2) return(base^(min:max))`.
+        result = _log_sub_breaks((0, 5), n=5, base=2)
+        assert np.allclose(result, [2 ** p for p in range(0, 6)])
 
     def test_other_base(self):
-        result = _fill_log_breaks((0, 3), 5, 5)
+        result = _log_sub_breaks((0, 3), n=5, base=5)
         assert len(result) > 0
 
 
@@ -163,38 +167,43 @@ class TestFillLogBreaks:
 # ---------------------------------------------------------------------------
 
 class TestMinorBreaksLog:
+    # R's minor_breaks_log takes the data (not "majors") and ignores
+    # extras; our port accepts the same signature for compatibility.
+
     def test_basic(self):
         fn = minor_breaks_log()
-        majors = np.array([1, 10, 100])
-        result = fn(majors, np.array([1, 100]), 5)
+        result = fn(np.array([1, 10, 100]), np.array([1, 100]), 5)
         assert len(result) > 0
 
-    def test_fewer_than_two_majors(self):
+    def test_single_x_still_generates(self):
+        # R: no special-case for length 1; 10^k ladder is still built.
         fn = minor_breaks_log()
         result = fn(np.array([10]), np.array([1, 100]), 5)
-        assert len(result) == 0
+        assert len(result) > 0
 
-    def test_no_positive_majors(self):
+    def test_negative_x_mirrors_ladder(self):
+        # R: has_negatives -> ticks reflected, 0 included.
         fn = minor_breaks_log()
         result = fn(np.array([-10, -1]), np.array([-10, -1]), 5)
-        assert len(result) == 0
+        assert np.any(result > 0)
+        assert np.any(result < 0)
+        assert 0.0 in result
 
-    def test_detail_one(self):
+    def test_detail_one_populates(self):
+        # detail=1 -> tens + fives + ones; definitely non-empty.
         fn = minor_breaks_log(detail=1)
-        majors = np.array([1, 10, 100])
-        result = fn(majors, np.array([1, 100]), 5)
-        assert len(result) == 0
+        result = fn(np.array([1, 10, 100]), np.array([1, 100]), 5)
+        assert len(result) > 0
 
     def test_detail_five(self):
         fn = minor_breaks_log(detail=5)
-        majors = np.array([1, 10, 100])
-        result = fn(majors, np.array([1, 100]), 5)
+        result = fn(np.array([1, 10, 100]), np.array([1, 100]), 5)
         assert len(result) > 0
 
-    def test_smallest_threshold(self):
+    def test_smallest_threshold_requires_negatives(self):
+        # Per R: `smallest` only takes effect when any x <= 0.
         fn = minor_breaks_log(smallest=5)
-        majors = np.array([1, 10, 100])
-        result = fn(majors, np.array([1, 100]), 5)
-        # All results should be >= 5
-        if len(result) > 0:
-            assert np.all(np.abs(result) >= 5)
+        result = fn(np.array([-100, -1, 1, 100]), np.array([-100, 100]), 5)
+        # Non-zero ticks must all have |t| >= 5.
+        nonzero = result[result != 0]
+        assert np.all(np.abs(nonzero) >= 5)

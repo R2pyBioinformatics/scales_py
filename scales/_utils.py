@@ -124,15 +124,14 @@ def expand_range(
     if range.shape != (2,):
         raise ValueError("range must have exactly 2 elements")
 
-    if zero_range(range):
-        center = range[0]
-        return (center - zero_width / 2, center + zero_width / 2)
-
-    extent = range[1] - range[0]
-    return (
-        range[0] - extent * mul - add,
-        range[1] + extent * mul + add,
-    )
+    # Matches R exactly:
+    #   width <- if (zero_range(range)) zero_width else diff(range)
+    #   range + c(-1, 1) * (width * mul + add)
+    # So with the defaults (mul=0, add=0) a zero-range input returns
+    # unchanged, and the `zero_width` only participates via `mul`.
+    width = zero_width if zero_range(range) else range[1] - range[0]
+    delta = width * mul + add
+    return (float(range[0] - delta), float(range[1] + delta))
 
 
 def rescale_common(

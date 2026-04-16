@@ -155,44 +155,43 @@ def regular_minor_breaks(
         limits: np.ndarray,
         n: int = 2,
     ) -> np.ndarray:
-        major = np.asarray(major, dtype=float)
-        limits = np.asarray(limits, dtype=float)
+        # Mirrors R's regular_minor_breaks (R/minor_breaks.R:65-93):
+        # drop NAs; if fewer than 2 majors, return empty; extend by one
+        # step past each edge depending on which side the limits reach;
+        # interpolate (n+1)-length ``seq`` between consecutive majors,
+        # dropping the last point, then re-append the final major.
+        b = np.asarray(major, dtype=float)
+        b = b[~np.isnan(b)]
+        b = np.sort(b)
 
-        if reverse:
-            major = -major
-            limits = -limits[::-1]
-
-        major = np.sort(major)
-
-        if len(major) < 2 or n < 1:
+        if len(b) < 2 or n < 1:
             return np.array([], dtype=float)
 
-        # n-1 minor breaks between each pair of majors
-        n_minor = n - 1
-        if n_minor < 1:
-            return np.array([], dtype=float)
+        lim = np.asarray(limits, dtype=float)
+        lo_lim, hi_lim = float(np.min(lim)), float(np.max(lim))
 
-        minors: list[float] = []
-        # Extend beyond the major range by one step on each side
-        step = major[1] - major[0]
-        extended = np.concatenate(
-            [[major[0] - step], major, [major[-1] + step]]
-        )
+        bd = b[1] - b[0]  # step
 
-        for i in range(len(extended) - 1):
-            lo = extended[i]
-            hi = extended[i + 1]
-            interval_step = (hi - lo) / n
-            for j in range(1, n):
-                val = lo + j * interval_step
-                if limits[0] <= val <= limits[1]:
-                    minors.append(val)
+        # R: when not reversed, extend low side if limits reach below,
+        #    high side if limits reach above; reversed swaps the two.
+        if not reverse:
+            if lo_lim < b[0]:
+                b = np.concatenate([[b[0] - bd], b])
+            if hi_lim > b[-1]:
+                b = np.concatenate([b, [b[-1] + bd]])
+        else:
+            if hi_lim > b[-1]:
+                b = np.concatenate([[b[0] - bd], b])
+            if lo_lim < b[0]:
+                b = np.concatenate([b, [b[-1] + bd]])
 
-        result = np.array(sorted(set(minors)), dtype=float)
-
-        if reverse:
-            result = -result[::-1]
-
-        return result
+        # (n+1)-length seq between each consecutive pair, dropping last
+        # (that's the next major). Then re-append the final major.
+        pieces: list[np.ndarray] = []
+        for i in range(len(b) - 1):
+            seq = np.linspace(b[i], b[i + 1], n + 1)[:-1]
+            pieces.append(seq)
+        pieces.append(np.array([b[-1]], dtype=float))
+        return np.concatenate(pieces)
 
     return _minor_breaks

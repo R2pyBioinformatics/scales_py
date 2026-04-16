@@ -100,10 +100,19 @@ class TestRescaleMid:
 
     def test_all_same_values(self):
         result = scales.rescale_mid([1, float("nan"), 1])
-        # When all values equal, rescale_mid maps them to 1.0 (top of range)
-        assert not np.isnan(result[0])
+        # Per R: zero_range(from) -> non-NA values map to mean(to) = 0.5.
+        assert result[0] == pytest.approx(0.5)
         assert np.isnan(result[1])
-        assert not np.isnan(result[2])
+        assert result[2] == pytest.approx(0.5)
+
+    def test_r_asymmetric_reference(self):
+        # R: scales::rescale_mid(c(0, 3, 100), mid = 5)
+        # extent = 2*max(|0-5|, |100-5|) = 190; (x-5)/190 + 0.5
+        result = scales.rescale_mid([0, 3, 100], mid=5)
+        np.testing.assert_allclose(
+            result,
+            [(-5) / 190 + 0.5, (-2) / 190 + 0.5, 95 / 190 + 0.5],
+        )
 
 
 # ---------------------------------------------------------------------------
