@@ -194,10 +194,11 @@ class TestPalBrewerEdge:
 # ---------------------------------------------------------------------------
 
 class TestPalHueEdge:
-    def test_zero(self):
+    def test_zero_raises(self):
+        # R: `if (n == 0) cli::cli_abort("Must request at least one ...")`.
         pal = pal_hue()
-        result = pal(0)
-        assert result == []
+        with pytest.raises(ValueError):
+            pal(0)
 
     def test_direction_reverse(self):
         pal = pal_hue(direction=-1)
@@ -254,14 +255,19 @@ class TestPalGreyEdge:
 
 class TestPalShapeEdge:
     def test_not_solid(self):
+        # Per R: c(1, 2, 0, 3, 7, 8) for solid=FALSE.
         pal = pal_shape(solid=False)
-        result = pal(3)
-        assert len(result) == 3
+        assert pal(3) == [1, 2, 0]
+        assert pal(6) == [1, 2, 0, 3, 7, 8]
 
     def test_too_many(self):
+        # Per R: warn rather than abort; positions past max_n come back
+        # as NA (None in Python).
         pal = pal_shape()
-        with pytest.raises(ValueError):
-            pal(100)
+        with pytest.warns(UserWarning):
+            result = pal(8)
+        assert result[:6] == [16, 17, 15, 3, 7, 8]
+        assert result[6] is None and result[7] is None
 
 
 # ---------------------------------------------------------------------------
@@ -270,9 +276,12 @@ class TestPalShapeEdge:
 
 class TestPalLinetypeEdge:
     def test_too_many(self):
+        # Per R: warn (via pal_manual) rather than abort; pad with None.
         pal = pal_linetype()
-        with pytest.raises(ValueError):
-            pal(100)
+        max_n = pal.nlevels
+        with pytest.warns(UserWarning):
+            result = pal(max_n + 2)
+        assert result[max_n] is None and result[max_n + 1] is None
 
 
 # ---------------------------------------------------------------------------
@@ -281,9 +290,11 @@ class TestPalLinetypeEdge:
 
 class TestPalIdentity:
     def test_basic(self):
+        # Mirrors R: pal_identity()(3) -> 3 (pass-through).
         pal = pal_identity()
-        result = pal(5)
-        assert result == [0, 1, 2, 3, 4]
+        assert pal(5) == 5
+        assert pal([1, 2, 3]) == [1, 2, 3]
+        assert pal("red") == "red"
 
 
 # ---------------------------------------------------------------------------
@@ -297,9 +308,12 @@ class TestPalManualEdge:
         assert len(result) == 2
 
     def test_too_many(self):
+        # Per R: warn (not raise) and pad positions past the palette
+        # length with NA / None.
         pal = pal_manual(["#FF0000"])
-        with pytest.raises(ValueError):
-            pal(2)
+        with pytest.warns(UserWarning):
+            result = pal(2)
+        assert result[0] == "#FF0000" and result[1] is None
 
 
 # ---------------------------------------------------------------------------
@@ -312,9 +326,13 @@ class TestPalDichromat:
             pal_dichromat(name="Unknown")
 
     def test_too_many(self):
+        # Per R: pal_dichromat wraps pal_manual, which warns + pads
+        # rather than raising.
         pal = pal_dichromat(name="SteppedSequential.5")
-        with pytest.raises(ValueError):
-            pal(100)
+        with pytest.warns(UserWarning):
+            result = pal(100)
+        max_n = pal.nlevels
+        assert result[max_n] is None
 
     def test_basic(self):
         pal = pal_dichromat()

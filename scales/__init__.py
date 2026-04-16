@@ -166,6 +166,10 @@ __all__ = [
     # palettes – coercion
     "as_discrete_pal",
     "as_continuous_pal",
+    "register_palette",
+    "get_palette",
+    "palette_names",
+    "reset_palettes",
     # palettes – discrete factories
     "pal_brewer",
     "pal_hue",

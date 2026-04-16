@@ -25,6 +25,7 @@ __all__ = [
     "col_lighter",
     "col_darker",
     "col_saturate",
+    "wrap_col_adjustment",
 ]
 
 
@@ -44,6 +45,28 @@ def _delinearize(c: float) -> float:
     if c <= 0.0031308:
         return 12.92 * c
     return 1.055 * (c ** (1.0 / 2.4)) - 0.055
+
+
+def _rgb_to_xyz(r: float, g: float, b: float) -> tuple[float, float, float]:
+    """sRGB [0, 1] -> CIE XYZ (D65)."""
+    rl = _linearize(r)
+    gl = _linearize(g)
+    bl = _linearize(b)
+    x = 0.4124564 * rl + 0.3575761 * gl + 0.1804375 * bl
+    y = 0.2126729 * rl + 0.7151522 * gl + 0.0721750 * bl
+    z = 0.0193339 * rl + 0.1191920 * gl + 0.9503041 * bl
+    return x, y, z
+
+
+def _xyz_to_rgb(x: float, y: float, z: float) -> tuple[float, float, float]:
+    """CIE XYZ (D65) -> sRGB [0, 1], clamped."""
+    rl = 3.2404542 * x - 1.5371385 * y - 0.4985314 * z
+    gl = -0.9692660 * x + 1.8760108 * y + 0.0415560 * z
+    bl = 0.0556434 * x - 0.2040259 * y + 1.0572252 * z
+    r = np.clip(_delinearize(rl), 0.0, 1.0)
+    g = np.clip(_delinearize(gl), 0.0, 1.0)
+    b = np.clip(_delinearize(bl), 0.0, 1.0)
+    return float(r), float(g), float(b)
 
 
 def _rgb_to_lab(r: float, g: float, b: float) -> tuple[float, float, float]:
@@ -403,6 +426,73 @@ def show_col(
     plt.show()
 
 
+_COL_MIX_SPACES = {"rgb", "lab", "hcl", "lch", "hsl", "xyz"}
+
+
+def wrap_col_adjustment(
+    inner: object,
+    outer_fn,
+    /,
+    **outer_kwargs,
+):
+    """Wrap a colour palette so *outer_fn* is applied to each output colour.
+
+    Port of R's ``wrap_col_adjustment`` (``R/colour-manip.R``).  Used by
+    ``col_mix``/``col_shift``/``col_lighter``/``col_saturate`` when the
+    first argument is a palette rather than a bare colour string — the
+    result is a **new palette** of the same kind whose outputs are the
+    adjusted colours.
+
+    Parameters
+    ----------
+    inner : ContinuousPalette or DiscretePalette
+        The colour palette to wrap.  Must be a colour palette
+        (``palette_type(inner) == "colour"``).
+    outer_fn : callable
+        One of ``col_mix`` / ``col_shift`` / ``col_lighter`` / ``col_darker``
+        / ``col_saturate`` — called as
+        ``outer_fn(inner(...), **outer_kwargs)``.
+    **outer_kwargs
+        Passed to *outer_fn* on each invocation.
+
+    Returns
+    -------
+    ContinuousPalette or DiscretePalette
+        A new palette, same kind as *inner*, returning adjusted colours.
+    """
+    from .palettes import (
+        ContinuousPalette,
+        DiscretePalette,
+        is_colour_pal,
+        palette_nlevels,
+        palette_na_safe,
+    )
+
+    if not is_colour_pal(inner):
+        raise TypeError("wrap_col_adjustment requires a colour palette")
+
+    def _adjusted(*args, **kwargs):
+        raw = inner(*args, **kwargs)
+        if isinstance(raw, str):
+            return outer_fn(raw, **outer_kwargs)
+        # list / tuple / ndarray of colours
+        return [outer_fn(c, **outer_kwargs) for c in raw]
+
+    if isinstance(inner, DiscretePalette):
+        return DiscretePalette(
+            _adjusted, type="colour", nlevels=palette_nlevels(inner)
+        )
+    return ContinuousPalette(
+        _adjusted, type="colour", na_safe=palette_na_safe(inner)
+    )
+
+
+def _is_palette_input(x) -> bool:
+    """True if *x* is a scales palette object (discrete or continuous)."""
+    from .palettes import ContinuousPalette, DiscretePalette
+    return isinstance(x, (ContinuousPalette, DiscretePalette))
+
+
 def col_mix(
     a: str,
     b: str,
@@ -412,6 +502,10 @@ def col_mix(
     """
     Mix two colours.
 
+    Mirrors R's ``col_mix``: components are interpolated linearly in the
+    requested *space*.  Hue channels are interpolated as plain numbers
+    (not circular shortest-path), matching ``farver``'s behaviour.
+
     Parameters
     ----------
     a, b : str
@@ -419,22 +513,35 @@ def col_mix(
     amount : float, default 0.5
         Mixing fraction.  0 returns *a*, 1 returns *b*.
     space : str, default "rgb"
-        Colour space for interpolation (``"rgb"`` or ``"lab"``).
+        Interpolation space.  One of ``"rgb"``, ``"lab"``, ``"hcl"``,
+        ``"lch"`` (alias of ``"hcl"``), or ``"hsl"``.
 
     Returns
     -------
     str
         Mixed colour as a hex string.
-
-    Raises
-    ------
-    ValueError
-        If *amount* is not in [0, 1].
     """
     if not (0.0 <= amount <= 1.0):
         raise ValueError(f"amount must be between 0 and 1, got {amount}")
+    if space not in _COL_MIX_SPACES:
+        raise ValueError(
+            f"space must be one of {sorted(_COL_MIX_SPACES)!r}, got {space!r}"
+        )
+
+    # S3-style dispatch on palette first arg (mirrors R's
+    # `col_mix.scales_pal` → `wrap_col_adjustment`).
+    if _is_palette_input(a):
+        return wrap_col_adjustment(a, col_mix, b=b, amount=amount, space=space)
+
     rgba_a = to_rgba(a)
     rgba_b = to_rgba(b)
+    alpha_m = rgba_a[3] + amount * (rgba_b[3] - rgba_a[3])
+
+    if space == "rgb":
+        mixed = tuple(
+            rgba_a[i] + amount * (rgba_b[i] - rgba_a[i]) for i in range(4)
+        )
+        return to_hex(mixed, keep_alpha=True)
 
     if space == "lab":
         La, aa, ba = _rgb_to_lab(*rgba_a[:3])
@@ -443,53 +550,89 @@ def col_mix(
         am = aa + amount * (ab - aa)
         bm = ba + amount * (bb - ba)
         r, g, bl = _lab_to_rgb(Lm, am, bm)
-        alpha_m = rgba_a[3] + amount * (rgba_b[3] - rgba_a[3])
         return to_hex((r, g, bl, alpha_m), keep_alpha=True)
-    else:
-        mixed = tuple(
-            rgba_a[i] + amount * (rgba_b[i] - rgba_a[i]) for i in range(4)
-        )
-        return to_hex(mixed, keep_alpha=True)
+
+    if space in ("hcl", "lch"):
+        # HCL == LCH (cylindrical CIELAB), farver-style linear hue mix.
+        La, aa, ba = _rgb_to_lab(*rgba_a[:3])
+        Lb, ab, bb = _rgb_to_lab(*rgba_b[:3])
+        ha, ca, la_ = _lab_to_hcl(La, aa, ba)
+        hb, cb, lb_ = _lab_to_hcl(Lb, ab, bb)
+        hm = ha + amount * (hb - ha)
+        cm = ca + amount * (cb - ca)
+        lm = la_ + amount * (lb_ - la_)
+        L, a_, b_ = _hcl_to_lab(hm, cm, lm)
+        r, g, bl = _lab_to_rgb(L, a_, b_)
+        return to_hex((r, g, bl, alpha_m), keep_alpha=True)
+
+    if space == "xyz":
+        xa, ya, za = _rgb_to_xyz(*rgba_a[:3])
+        xb, yb, zb = _rgb_to_xyz(*rgba_b[:3])
+        xm = xa + amount * (xb - xa)
+        ym = ya + amount * (yb - ya)
+        zm = za + amount * (zb - za)
+        r, g, bl = _xyz_to_rgb(xm, ym, zm)
+        return to_hex((r, g, bl, alpha_m), keep_alpha=True)
+
+    # HSL via colorsys (which calls it HLS — same space, just channel
+    # ordering H/L/S instead of H/S/L).
+    import colorsys
+    ha, la_, sa = colorsys.rgb_to_hls(*rgba_a[:3])
+    hb, lb_, sb = colorsys.rgb_to_hls(*rgba_b[:3])
+    hm = ha + amount * (hb - ha)
+    lm = la_ + amount * (lb_ - la_)
+    sm = sa + amount * (sb - sa)
+    r, g, bl = colorsys.hls_to_rgb(hm, lm, sm)
+    return to_hex((r, g, bl, alpha_m), keep_alpha=True)
 
 
-def col_shift(col: str, amount: float = 10) -> str:
+def col_shift(col, amount: float = 10):
     """
     Shift the hue of a colour.
 
+    Accepts a colour string **or** a colour palette.  When a palette is
+    passed, returns a new palette whose colours are all hue-shifted by
+    *amount* (mirrors R's ``col_shift.scales_pal``).
+
     Parameters
     ----------
-    col : str
-        A colour specification.
+    col : str or palette
+        A colour specification or a scales palette object.
     amount : float, default 10
         Degrees to shift hue.
 
     Returns
     -------
-    str
-        Hue-shifted colour as a hex string.
+    str or palette
+        Hue-shifted colour(s).
     """
+    if _is_palette_input(col):
+        return wrap_col_adjustment(col, col_shift, amount=amount)
     h, c, l, a = _hex_to_hcl(col)
     return _hcl_to_hex((h + amount) % 360, c, l, a)
 
 
-def col_lighter(col: str, amount: float = 10) -> str:
+def col_lighter(col, amount: float = 10):
     """
     Increase the lightness of a colour in HSL space.
 
     Matches R's ``farver::add_to_channel(col, "l", amount, space = "hsl")``.
+    Accepts a colour string or a palette (wrapped via
+    :func:`wrap_col_adjustment`).
 
     Parameters
     ----------
-    col : str
-        A colour specification.
+    col : str or palette
+        A colour specification or a scales palette object.
     amount : float, default 10
         Amount to add to lightness (HSL *L*, range 0–100).
 
     Returns
     -------
-    str
-        Lighter colour as a hex string.
+    str or palette
     """
+    if _is_palette_input(col):
+        return wrap_col_adjustment(col, col_lighter, amount=amount)
     import colorsys
     rgba = to_rgba(col)
     h, l, s = colorsys.rgb_to_hls(rgba[0], rgba[1], rgba[2])
@@ -499,45 +642,36 @@ def col_lighter(col: str, amount: float = 10) -> str:
     return to_hex((r, g, b, rgba[3]), keep_alpha=True)
 
 
-def col_darker(col: str, amount: float = 10) -> str:
+def col_darker(col, amount: float = 10):
     """
     Decrease the luminance of a colour.
 
-    Equivalent to ``col_lighter(col, -amount)``.
-
-    Parameters
-    ----------
-    col : str
-        A colour specification.
-    amount : float, default 10
-        Amount to subtract from luminance.
-
-    Returns
-    -------
-    str
-        Darker colour as a hex string.
+    Equivalent to ``col_lighter(col, -amount)`` — and, for palette
+    inputs, returns a palette whose colours are darkened.
     """
     return col_lighter(col, -amount)
 
 
-def col_saturate(col: str, amount: float = 10) -> str:
+def col_saturate(col, amount: float = 10):
     """
     Increase the saturation of a colour in HSL space.
 
     Matches R's ``farver::add_to_channel(col, "s", amount, space = "hsl")``.
+    Accepts a colour string or a palette.
 
     Parameters
     ----------
-    col : str
-        A colour specification.
+    col : str or palette
+        A colour specification or a scales palette object.
     amount : float, default 10
         Amount to add to saturation (HSL *S*, range 0–100).
 
     Returns
     -------
-    str
-        More saturated colour as a hex string.
+    str or palette
     """
+    if _is_palette_input(col):
+        return wrap_col_adjustment(col, col_saturate, amount=amount)
     import colorsys
     rgba = to_rgba(col)
     h, l, s = colorsys.rgb_to_hls(rgba[0], rgba[1], rgba[2])
