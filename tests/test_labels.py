@@ -13,11 +13,15 @@ import scales
 
 class TestLabelNumber:
     def test_basic(self):
+        # Intentional divergence from R: Python keeps no thousands
+        # separator by default so labels round-trip through float().
+        # Users wanting R's " " space must pass big_mark=" ".
         result = scales.label_number()([1234.5])
-        assert isinstance(result, list)
-        assert len(result) == 1
-        # Default accuracy rounds to integer
         assert result == ["1234"]
+
+    def test_r_style_big_mark(self):
+        result = scales.label_number(big_mark=" ")([1234.5])
+        assert result == ["1 234"]
 
     def test_with_accuracy(self):
         result = scales.label_number(accuracy=0.1)([1234.5])
@@ -204,15 +208,13 @@ class TestLabelWrap:
 
 class TestLabelLog:
     def test_basic(self):
+        # Mirrors R's format_log / label_log: 1 -> "10^0", not "1".
         result = scales.label_log(10)([1, 100, 1000])
-        assert len(result) == 3
-        assert result[0] == "1"
-        assert "10" in result[1]
-        assert "10" in result[2]
+        assert result == ["10^0", "10^2", "10^3"]
 
     def test_known_values(self):
         result = scales.label_log(10)([1, 100, 1000])
-        assert result == ["1", "10^2", "10^3"]
+        assert result == ["10^0", "10^2", "10^3"]
 
 
 # ---------------------------------------------------------------------------
@@ -247,12 +249,14 @@ class TestComposeLabel:
         assert result == ["1234!"]
 
     def test_two_label_functions(self):
+        # label_dollar() defaults to R's currency_big_mark=",", so the
+        # second formatter gets "1234" and reformats it as "$1,234".
         composed = scales.compose_label(
             scales.label_number(accuracy=1),
             scales.label_dollar(),
         )
         result = composed([1234.5])
-        assert result == ["$1234"]
+        assert result == ["$1,234"]
 
 
 # ---------------------------------------------------------------------------

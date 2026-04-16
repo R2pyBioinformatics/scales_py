@@ -287,8 +287,9 @@ class TestPvalueEdge:
         assert result[0].startswith("p>")
 
     def test_add_p_normal(self):
+        # R uses "p=" (no spaces) as the middle prefix when add_p=TRUE.
         result = pvalue([0.5], accuracy=0.001, add_p=True)
-        assert "p = " in result[0]
+        assert result[0].startswith("p=")
 
     def test_non_finite(self):
         result = pvalue([float("nan"), float("inf")])
@@ -428,10 +429,12 @@ class TestLabelTimespan:
         assert "NaN" in result[0]
 
     def test_sub_second(self):
+        # R uses the Unicode Greek mu "\u03bcs" for microseconds when
+        # UTF-8 is available; Python matches unconditionally.
         fmt = label_timespan()
         result = fmt([0.001, 0.000001])
         assert "ms" in result[0]
-        assert "us" in result[1]
+        assert "\u03bcs" in result[1]
 
     def test_minutes_unit(self):
         fmt = label_timespan(unit="mins")
@@ -458,9 +461,8 @@ class TestLabelLog:
     def test_basic(self):
         fmt = label_log(base=10)
         result = fmt([1, 10, 100, 1000])
-        # label_log converts values: log10(1)=0 -> "1", log10(10)=1 -> "10^1"
-        assert result[0] == "1"  # 10^0 displays as "1"
-        assert "10^" in result[1]
+        # Mirrors R: log10(1)=0 -> "10^0", log10(10)=1 -> "10^1", ...
+        assert result == ["10^0", "10^1", "10^2", "10^3"]
 
     def test_non_integer_exponent(self):
         fmt = label_log(base=10, digits=3)
@@ -470,41 +472,53 @@ class TestLabelLog:
     def test_non_finite(self):
         fmt = label_log()
         result = fmt([float("nan"), float("inf")])
-        assert "NaN" in result[0]
+        assert result[0] == "NaN"
 
-    def test_zero_or_negative(self):
+    def test_zero_or_negative_switches_to_signed(self):
+        # Per R: any(finite <= 0) triggers signed mode; zeros print as "0".
         fmt = label_log()
-        result = fmt([0, -1])
-        assert result[0] == "0" or result[0] == "0.0"
-        assert result[1] == "-1" or result[1] == "-1.0"
+        result = fmt([0, -1, 1, 10])
+        assert result[0] == "0"
+        assert result[1] == "-10^0"
+        assert result[2] == "+10^0"
+        assert result[3] == "+10^1"
 
 
 # ---------------------------------------------------------------------------
-# format_log (lines 1493-1494, 1503, 1505)
+# format_log (R-parity semantics)
 # ---------------------------------------------------------------------------
 
 class TestFormatLog:
-    def test_basic(self):
+    def test_positive_values(self):
+        # R: format_log(c(1, 10, 100)) -> c("10^0", "10^1", "10^2")
+        result = format_log([1, 10, 100], base=10)
+        assert result == ["10^0", "10^1", "10^2"]
+
+    def test_zero_triggers_signed_and_becomes_zero(self):
+        # R: any(finite <= 0) -> signed=TRUE; sign(0)=0 -> text "0".
         result = format_log([0, 1, 2, -1], base=10)
-        assert result[0] == "1"  # 10^0 = 1
-        assert "10^" in result[1]
-        assert "10^" in result[2]
+        assert result[0] == "0"
+        assert result[1] == "+10^0"
+        assert result[2].startswith("+10^")
+        assert result[3] == "-10^0"
 
     def test_signed_true(self):
         result = format_log([1, 2], base=10, signed=True)
-        assert "+" in result[0]
+        assert result[0] == "+10^0"
+        assert result[1].startswith("+10^")
 
     def test_non_integer_base(self):
-        result = format_log([1], base=2.5)
-        assert "2.5^" in result[0]
+        result = format_log([2.5], base=2.5)
+        assert result[0] == "2.5^1"
 
     def test_nan_and_inf(self):
         result = format_log([float("nan"), float("inf")])
-        assert "NaN" in result[0]
+        assert result[0] == "NaN"
 
     def test_fractional_exponent(self):
-        result = format_log([1.5], base=10)
-        assert "10^1.5" in result[0]
+        # log10(sqrt(10)) ≈ 0.5
+        result = format_log([10 ** 0.5], base=10)
+        assert result[0].startswith("10^0.5")
 
 
 # ---------------------------------------------------------------------------

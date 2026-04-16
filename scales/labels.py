@@ -283,10 +283,12 @@ def cut_time_scale(space: bool = False) -> list[tuple[float, str]]:
         Scale-cut specification.
     """
     sp = " " if space else ""
+    # R uses "\u03BCs" (Greek small mu + s) when UTF-8 is available —
+    # Python assumes UTF-8 everywhere, so emit it unconditionally.
     return [
         (0, ""),
         (1e-9, f"{sp}ns"),
-        (1e-6, f"{sp}us"),
+        (1e-6, f"{sp}\u03bcs"),
         (1e-3, f"{sp}ms"),
         (1, f"{sp}s"),
         (60, f"{sp}m"),
@@ -345,8 +347,8 @@ def number(
     suffix: str = "",
     big_mark: Optional[str] = None,
     decimal_mark: Optional[str] = None,
-    style_positive: str = "none",
-    style_negative: str = "hyphen",
+    style_positive: Optional[str] = None,
+    style_negative: Optional[str] = None,
     scale_cut: Optional[list[tuple[float, str]]] = None,
     trim: bool = True,
 ) -> list[str]:
@@ -389,8 +391,19 @@ def number(
     x_arr = np.asarray(x, dtype=float)
     x_scaled = x_arr * scale
 
+    # Resolve defaults from the module-level option store
+    # (`number_options()` — mirrors R's getOption("scales.*")). Python
+    # keeps an empty big_mark default so label output round-trips
+    # through float(); R uses " " instead. Users can opt in via
+    # `number_options(big_mark=" ")`.
+    if big_mark is None:
+        big_mark = str(_NUMBER_OPTIONS.get("big_mark", ""))
     if decimal_mark is None:
-        decimal_mark = "."
+        decimal_mark = str(_NUMBER_OPTIONS.get("decimal_mark", "."))
+    if style_positive is None:
+        style_positive = str(_NUMBER_OPTIONS.get("style_positive", "none"))
+    if style_negative is None:
+        style_negative = str(_NUMBER_OPTIONS.get("style_negative", "hyphen"))
 
     # Apply scale_cut
     per_value_suffix: Optional[list[str]] = None
@@ -553,72 +566,161 @@ def percent(x: ArrayLike, accuracy: Optional[float] = None, scale: float = 100,
 # ---------------------------------------------------------------------------
 
 
-def label_currency(
+def _needs_cents(x: np.ndarray, threshold: float) -> bool:
+    """Mirror R's `needs_cents`: decide whether an auto-accuracy pass
+    should use 0.01 (cents) or 1 (whole units).
+
+    * Empty / all-NaN   → False
+    * Max |x| > threshold → False (values too large; skip fractional)
+    * Otherwise         → True iff **any** finite value is non-integer.
+    """
+    x = np.asarray(x, dtype=float)
+    finite = x[np.isfinite(x)]
+    if finite.size == 0:
+        return False
+    if np.nanmax(np.abs(finite)) > threshold:
+        return False
+    return bool(np.any(finite != np.floor(finite)))
+
+
+def dollar(
+    x: ArrayLike,
     accuracy: Optional[float] = None,
-    prefix: str = "$",
-    suffix: str = "",
+    scale: float = 1,
+    prefix: Optional[str] = None,
+    suffix: Optional[str] = None,
     big_mark: Optional[str] = None,
     decimal_mark: Optional[str] = None,
-    style_positive: str = "none",
-    style_negative: str = "hyphen",
-    scale: float = 1,
-    scale_cut: Optional[list[tuple[float, str]]] = None,
     trim: bool = True,
+    largest_with_cents: float = 100000,
+    style_negative: Optional[str] = None,
+    scale_cut: Optional[list[tuple[float, str]]] = None,
+    **kwargs: Any,
+) -> list[str]:
+    """Format *x* as currency.
+
+    Matches R's ``dollar``:
+
+    * Currency-specific defaults fall through ``_NUMBER_OPTIONS``
+      (``currency_prefix``, ``currency_suffix``, ``currency_big_mark``,
+      ``currency_decimal_mark``).  The baked-in fallbacks are ``"$"``,
+      ``""``, ``","``, ``"."`` respectively.
+    * When ``accuracy`` is ``None`` *and* no ``scale_cut`` is given, the
+      accuracy is chosen by the ``largest_with_cents`` heuristic: use
+      ``0.01`` when ``max(|x * scale|) <= largest_with_cents`` *and* any
+      input has a fractional part; otherwise ``1``.
+    * When ``big_mark == decimal_mark == ","``, ``big_mark`` is swapped
+      to a space to avoid ambiguity.
+    """
+    if prefix is None:
+        prefix = str(_NUMBER_OPTIONS.get("currency_prefix", "$"))
+    if suffix is None:
+        suffix = str(_NUMBER_OPTIONS.get("currency_suffix", ""))
+    if big_mark is None:
+        big_mark = str(_NUMBER_OPTIONS.get("currency_big_mark", ","))
+    if decimal_mark is None:
+        decimal_mark = str(_NUMBER_OPTIONS.get("currency_decimal_mark", "."))
+
+    x_arr = np.asarray(x, dtype=float)
+    if x_arr.size == 0:
+        return []
+
+    if accuracy is None and scale_cut is None:
+        if _needs_cents(x_arr * scale, largest_with_cents):
+            accuracy = 0.01
+        else:
+            accuracy = 1
+
+    if big_mark == "," and decimal_mark == ",":
+        big_mark = " "
+
+    return number(
+        x_arr,
+        accuracy=accuracy,
+        scale=scale,
+        prefix=prefix,
+        suffix=suffix,
+        big_mark=big_mark,
+        decimal_mark=decimal_mark,
+        trim=trim,
+        style_negative=style_negative,
+        scale_cut=scale_cut,
+        **kwargs,
+    )
+
+
+def label_currency(
+    accuracy: Optional[float] = None,
+    scale: float = 1,
+    prefix: Optional[str] = None,
+    suffix: Optional[str] = None,
+    big_mark: Optional[str] = None,
+    decimal_mark: Optional[str] = None,
+    trim: bool = True,
+    largest_with_fractional: float = 100000,
     **kwargs: Any,
 ) -> Callable[[ArrayLike], list[str]]:
     """
     Label currency values.
 
+    Thin closure around :func:`dollar` — matches R's ``label_currency``
+    wrapping ``dollar(..., largest_with_cents = largest_with_fractional)``.
+
     Parameters
     ----------
     accuracy : float, optional
-        Rounding precision.
-    prefix : str, optional
-        Currency symbol (default ``"$"``).
-    suffix : str, optional
-        Appended string.
-    big_mark : str, optional
-        Thousands separator.
-    decimal_mark : str, optional
-        Decimal separator.
-    style_positive : str, optional
-        Treatment of positive values.
-    style_negative : str, optional
-        Treatment of negative values.
-    scale : float, optional
-        Multiplicative factor.
-    scale_cut : list of (float, str), optional
-        SI-style suffix specification.
-    trim : bool, optional
-        Strip trailing zeros.
-
-    Returns
-    -------
-    callable
-        ``(x) -> list[str]``
+        Fixed rounding precision.  When ``None`` (default), accuracy is
+        auto-detected via the ``largest_with_fractional`` heuristic.
+    largest_with_fractional : float, optional
+        Threshold above which fractional accuracy is suppressed
+        (default ``100000``).  See :func:`dollar`.
     """
-    return label_number(
-        accuracy=accuracy,
-        prefix=prefix,
-        suffix=suffix,
-        big_mark=big_mark,
-        decimal_mark=decimal_mark,
-        style_positive=style_positive,
-        style_negative=style_negative,
-        scale=scale,
-        scale_cut=scale_cut,
-        trim=trim,
-        **kwargs,
-    )
+
+    def formatter(x: ArrayLike) -> list[str]:
+        return dollar(
+            x,
+            accuracy=accuracy,
+            scale=scale,
+            prefix=prefix,
+            suffix=suffix,
+            big_mark=big_mark,
+            decimal_mark=decimal_mark,
+            trim=trim,
+            largest_with_cents=largest_with_fractional,
+            **kwargs,
+        )
+
+    return formatter
 
 
-label_dollar = label_currency
+def label_dollar(
+    accuracy: Optional[float] = None,
+    scale: float = 1,
+    prefix: Optional[str] = None,
+    suffix: Optional[str] = None,
+    big_mark: Optional[str] = None,
+    decimal_mark: Optional[str] = None,
+    trim: bool = True,
+    largest_with_cents: float = 100000,
+    **kwargs: Any,
+) -> Callable[[ArrayLike], list[str]]:
+    """Label currency values (superseded alias of :func:`label_currency`)."""
 
+    def formatter(x: ArrayLike) -> list[str]:
+        return dollar(
+            x,
+            accuracy=accuracy,
+            scale=scale,
+            prefix=prefix,
+            suffix=suffix,
+            big_mark=big_mark,
+            decimal_mark=decimal_mark,
+            trim=trim,
+            largest_with_cents=largest_with_cents,
+            **kwargs,
+        )
 
-def dollar(x: ArrayLike, accuracy: Optional[float] = None, prefix: str = "$",
-           **kwargs: Any) -> list[str]:
-    """Format *x* as currency."""
-    return number(x, accuracy=accuracy, prefix=prefix, **kwargs)
+    return formatter
 
 
 # ---------------------------------------------------------------------------
@@ -839,85 +941,95 @@ def label_bytes(
 # ---------------------------------------------------------------------------
 
 
-def ordinal_english() -> Callable[[int], str]:
-    """
-    Return an English ordinal suffix function.
+class OrdinalRules(list):
+    """R-style ordinal rule set: an ordered list of ``(suffix, regex)``.
 
-    The returned function maps an integer to its ordinal suffix:
-    ``1 -> "st"``, ``2 -> "nd"``, ``3 -> "rd"``, else ``"th"``.
-    Special cases: 11, 12, 13 always map to ``"th"``.
+    Iterating yields ``(suffix, pattern)`` pairs in priority order — this
+    mirrors R's ``ordinal_english()`` return value (a named list of
+    regex strings where the **name** is the suffix and the **value** is
+    the pattern).
+
+    For backwards compatibility, instances are *also callable*: calling
+    with an integer returns the first matching suffix (Python's
+    historical API).
+    """
+
+    __slots__ = ()
+
+    def __call__(self, n: Any) -> str:
+        import re as _re
+        s = str(int(n))
+        for suffix, pattern in self:
+            if _re.search(pattern, s):
+                return suffix
+        return ""
+
+
+def ordinal_english() -> OrdinalRules:
+    """
+    Return the English ordinal rule set.
+
+    Mirrors R's ``ordinal_english``: a list of ``(suffix, regex)`` pairs
+    applied in order, first match wins.  Handles the 11/12/13 quirk via
+    lookbehind assertions.
 
     Returns
     -------
-    callable
-        ``(n: int) -> str``
+    OrdinalRules
+        Priority-ordered ``[(suffix, pattern), ...]``, also callable as
+        ``rules(n) -> suffix``.
     """
-
-    def _suffix(n: int) -> str:
-        n = int(n)
-        mod100 = abs(n) % 100
-        if mod100 in (11, 12, 13):
-            return "th"
-        mod10 = abs(n) % 10
-        if mod10 == 1:
-            return "st"
-        elif mod10 == 2:
-            return "nd"
-        elif mod10 == 3:
-            return "rd"
-        return "th"
-
-    return _suffix
+    return OrdinalRules([
+        ("st", r"(?<!1)1$"),
+        ("nd", r"(?<!1)2$"),
+        ("rd", r"(?<!1)3$"),
+        ("th", r"(?<=1)[123]$"),
+        ("th", r"[0456789]$"),
+        ("th", r"."),
+    ])
 
 
 def ordinal_french(
     gender: str = "masculin",
     plural: bool = False,
-) -> Callable[[int], str]:
+) -> OrdinalRules:
     """
-    Return a French ordinal suffix function.
+    Return the French ordinal rule set.
+
+    Mirrors R's ``ordinal_french``: only ``1`` gets the masculine/feminine
+    first-position suffix (``"er"`` / ``"re"``); everything else gets
+    ``"e"``.  When ``plural`` is ``True``, both suffixes receive a
+    trailing ``"s"``.
 
     Parameters
     ----------
     gender : str, optional
         ``"masculin"`` or ``"feminin"`` (default ``"masculin"``).
     plural : bool, optional
-        Whether to use plural form (default ``False``).
+        Use plural forms (default ``False``).
 
     Returns
     -------
-    callable
-        ``(n: int) -> str``
+    OrdinalRules
     """
-
-    def _suffix(n: int) -> str:
-        n = int(n)
-        if n == 1:
-            if gender == "feminin":
-                return "re" if not plural else "res"
-            return "er" if not plural else "ers"
-        return "e" if not plural else "es"
-
-    return _suffix
+    if gender not in ("masculin", "feminin"):
+        raise ValueError("gender must be 'masculin' or 'feminin'")
+    first = "er" if gender == "masculin" else "re"
+    rest = "e"
+    if plural:
+        first += "s"
+        rest += "s"
+    return OrdinalRules([(first, r"^1$"), (rest, r".")])
 
 
-def ordinal_spanish() -> Callable[[int], str]:
+def ordinal_spanish() -> OrdinalRules:
     """
-    Return a Spanish ordinal suffix function.
+    Return the Spanish ordinal rule set.
 
-    Returns ``".º"`` for masculine and ``".ª"`` for feminine.
-    Default is masculine (``".º"``).
-
-    Returns
-    -------
-    callable
-        ``(n: int) -> str``
+    Mirrors R's ``ordinal_spanish``: a single rule with suffix ``".º"``
+    matching every number.
     """
-
-    def _suffix(n: int) -> str:
-        return ".\u00ba"
-
-    return _suffix
+    return OrdinalRules([(".\u00ba", r".")])
 
 
 # ---------------------------------------------------------------------------
@@ -930,7 +1042,7 @@ def ordinal(
     prefix: str = "",
     suffix: str = "",
     big_mark: Optional[str] = None,
-    rules: Optional[Callable[[int], str]] = None,
+    rules: Optional[Any] = None,
 ) -> list[str]:
     """
     Format *x* as ordinals (1st, 2nd, 3rd, ...).
@@ -938,23 +1050,44 @@ def ordinal(
     Parameters
     ----------
     x : array-like
-        Numeric values (should be integers or integer-valued floats).
+        Numeric values (rounded to integers before formatting).
     prefix : str, optional
         Prepended string.
     suffix : str, optional
         Appended string.
     big_mark : str, optional
         Thousands separator.
-    rules : callable, optional
-        Function mapping ``int -> str`` suffix. Defaults to
-        :func:`ordinal_english`.
+    rules : :class:`OrdinalRules` or callable, optional
+        Suffix rule set.  May be:
+
+        * An :class:`OrdinalRules` instance (R-style list of
+          ``(suffix, regex)``) — first match wins.
+        * Any iterable of ``(suffix, regex)`` pairs — same behaviour.
+        * A plain callable ``(int) -> str``.
+        * ``None`` — defaults to :func:`ordinal_english` as in R.
 
     Returns
     -------
     list of str
     """
+    import re as _re
+
     if rules is None:
         rules = ordinal_english()
+
+    # Normalise the rule set into a callable that maps int -> suffix.
+    if callable(rules) and not isinstance(rules, (list, tuple)):
+        rule_fn = rules
+    else:
+        rule_list = list(rules)
+
+        def rule_fn(n: int) -> str:
+            s = str(int(n))
+            for sfx, pat in rule_list:
+                if _re.search(pat, s):
+                    return sfx
+            return ""
+
     x_arr = np.asarray(x, dtype=float)
     results: list[str] = []
 
@@ -964,7 +1097,7 @@ def ordinal(
             continue
         int_val = int(round(val))
         num_str = _format_number(float(int_val), 1, big_mark, ".", True)
-        ord_suffix = rules(int_val)
+        ord_suffix = rule_fn(int_val)
         results.append(f"{prefix}{num_str}{ord_suffix}{suffix}")
 
     return results
@@ -1036,13 +1169,17 @@ def pvalue(
     -------
     list of str
     """
+    # Mirrors R's pvalue: prefix default is ("p<","p=","p>") if add_p else
+    # ("<","",">"). The prefix is prepended verbatim — *no* added spaces.
     if prefix is None:
-        prefix_list = ["<", "", ">"]
+        prefix_list = ["p<", "p=", "p>"] if add_p else ["<", "", ">"]
     else:
         prefix_list = list(prefix)
+        if len(prefix_list) != 3:
+            raise ValueError("prefix must be a length-3 sequence")
 
     if decimal_mark is None:
-        decimal_mark = "."
+        decimal_mark = str(_NUMBER_OPTIONS.get("decimal_mark", "."))
 
     x_arr = np.asarray(x, dtype=float)
     results: list[str] = []
@@ -1061,9 +1198,6 @@ def pvalue(
         else:
             fmt = _format_number(val, accuracy, None, decimal_mark, False)
             s = f"{prefix_list[1]}{fmt}"
-
-        if add_p:
-            s = f"p{s}" if s.startswith("<") or s.startswith(">") else f"p = {s}"
 
         results.append(s)
 
@@ -1174,53 +1308,145 @@ def label_date(
 
 
 def label_date_short(
-    format: Optional[str] = None,
+    format: Optional[Sequence[Optional[str]]] = None,
     sep: str = "\n",
+    leading: str = "0",
+    tz: str = "UTC",
+    locale: Optional[str] = None,
 ) -> Callable[[ArrayLike], list[str]]:
     """
-    Label dates in a compact format, showing only changed components.
+    Label dates compactly, showing each component only when it changes.
+
+    Faithful port of R's ``label_date_short``:
+
+    * ``format`` is a length-4 vector of ``strftime`` codes for
+      ``(year, month, day, hour)``.  Default
+      ``("%Y", "%b", "%d", "%H:%M")``.
+    * A component is rendered for a given date only if that component
+      (or any *larger* component) differs from the previous date — i.e.
+      ``cumsum(changed(component)) >= 1`` per R.
+    * Components that are *always* zero / first-of-period across the
+      whole input are trimmed from the smallest up (e.g. the hour line
+      is dropped when every value is at 00:00).
+    * ``leading`` controls the character replacing a leading ``"0"`` in
+      each rendered component.  ``"0"`` keeps the zero (default);
+      ``""`` removes it; ``"\\u2007"`` is a typographic figure space.
 
     Parameters
     ----------
-    format : str, optional
-        Not used directly; kept for API compatibility.
+    format : sequence of 4 str, optional
+        ``(year_fmt, month_fmt, day_fmt, hour_fmt)``.
     sep : str, optional
-        Separator between date components (default ``"\\n"``).
+        Separator between rendered components (default newline).
+    leading : str, optional
+        Replacement for each component's leading ``"0"`` digit
+        (default ``"0"``, i.e. no replacement).
+    tz : str, optional
+        Timezone name (default ``"UTC"``).
+    locale : str, optional
+        Locale name.  Not implemented for month/day names (Python's
+        ``strftime`` respects ``LC_TIME`` at the OS level); accepted for
+        API parity.
 
     Returns
     -------
     callable
         ``(x) -> list[str]``
     """
+    _ = locale  # accepted for API parity; OS-level locale is used
+    tz_obj = _make_tz(tz)
+    default_format = ["%Y", "%b", "%d", "%H:%M"]
+    fmt = list(default_format) if format is None else list(format)
+    if len(fmt) != 4:
+        raise ValueError("format must be length 4 (year, month, day, hour)")
 
     def formatter(x: ArrayLike) -> list[str]:
         x_arr = np.asarray(x)
-        dts: list[Optional[datetime]] = []
-        for val in x_arr.flat:
-            dts.append(_to_datetime(val, timezone.utc))
+        dts: list[Optional[datetime]] = [
+            _to_datetime(v, tz_obj) for v in x_arr.flat
+        ]
+
+        n = len(dts)
+        if n == 0:
+            return []
+
+        # Extract year/month/day/hour/minute arrays; None for NA.
+        year = [d.year if d is not None else None for d in dts]
+        month = [d.month if d is not None else None for d in dts]
+        day = [d.day if d is not None else None for d in dts]
+        hour = [d.hour if d is not None else None for d in dts]
+        minute = [d.minute if d is not None else None for d in dts]
+
+        # changed[i]: True if i-th value differs from (i-1)-th, always
+        # True at i==0 or when either neighbour is NA. Matches R's
+        # `changed <- function(x) c(TRUE, is.na(x[-1]) | x[-1] != x[-1])`.
+        def _changed(vals: list[Any]) -> list[bool]:
+            out = [True] * n
+            for i in range(1, n):
+                if vals[i] is None or vals[i - 1] is None:
+                    out[i] = True
+                else:
+                    out[i] = vals[i] != vals[i - 1]
+            return out
+
+        ch_year = _changed(year)
+        ch_month = _changed(month)
+        ch_day = _changed(day)
+
+        # R's `cumsum(changes) >= 1` ensures that once a larger unit
+        # changes, all smaller units are re-shown for that row.
+        cum_year = [c for c in ch_year]
+        cum_month = [(cy or cm) for cy, cm in zip(cum_year, ch_month)]
+        cum_day = [(cym or cd) for cym, cd in zip(cum_month, ch_day)]
+
+        # Decide which *positions* are worth ever showing (the "firsts"
+        # trim).  Matches R's nested if-block.
+        show_hour = not all(
+            (h == 0 and m == 0) for h, m in zip(hour, minute) if h is not None
+        )
+        show_day = show_hour or not all(
+            d == 1 for d in day if d is not None
+        )
+        show_month = show_day or not all(
+            mo == 1 for mo in month if mo is not None
+        )
+
+        fmt_year = fmt[0]
+        fmt_month = fmt[1] if show_month else None
+        fmt_day = fmt[2] if show_day else None
+        fmt_hour = fmt[3] if show_hour else None
+
+        def _rstrip_leading(s: str) -> str:
+            if leading == "0":
+                return s
+            # Replace a leading "0" digit in the whole string, and any
+            # "0" directly after a separator (matches R's gsub).
+            out = re.sub(r"^0", leading, s)
+            if sep:
+                out = out.replace(sep + "0", sep + leading)
+            return out
 
         results: list[str] = []
-        prev_year: Optional[int] = None
-        prev_month: Optional[int] = None
-
-        for dt in dts:
+        for i, dt in enumerate(dts):
             if dt is None:
                 results.append("NA")
                 continue
 
             parts: list[str] = []
-            # Day always shown
-            parts.append(f"{dt.day:d}")
-            # Month shown if changed or first
-            if prev_month is None or dt.month != prev_month:
-                parts.append(dt.strftime("%b"))
-            # Year shown if changed or first
-            if prev_year is None or dt.year != prev_year:
-                parts.append(str(dt.year))
+            if fmt_hour is not None:
+                parts.append(dt.strftime(fmt_hour))
+            if fmt_day is not None and cum_day[i]:
+                parts.append(dt.strftime(fmt_day))
+            if fmt_month is not None and cum_month[i]:
+                parts.append(dt.strftime(fmt_month))
+            if cum_year[i]:
+                parts.append(dt.strftime(fmt_year))
 
-            prev_year = dt.year
-            prev_month = dt.month
-            results.append(sep.join(parts))
+            # R builds the matrix with smallest-first then reverses when
+            # joining — i.e. largest unit first visually.  We built
+            # smallest-first too, so reverse here.
+            parts = list(reversed(parts))
+            results.append(_rstrip_leading(sep.join(parts)))
 
         return results
 
@@ -1290,6 +1516,7 @@ def label_timespan(
         "weeks": 604800,
     }
 
+    # Unicode \u03bc mirrors R's cut_time_scale when UTF-8 is active.
     _thresholds = [
         (604800, "w"),
         (86400, "d"),
@@ -1297,7 +1524,7 @@ def label_timespan(
         (60, "m"),
         (1, "s"),
         (1e-3, "ms"),
-        (1e-6, "us"),
+        (1e-6, "\u03bcs"),
         (1e-9, "ns"),
     ]
 
@@ -1464,47 +1691,88 @@ def format_log(
     x: ArrayLike,
     base: float = 10,
     signed: Optional[bool] = None,
+    digits: int = 3,
 ) -> list[str]:
     """
     Format values as log expressions (e.g. ``"10^3"``).
 
+    Mirrors R's ``scales::format_log``: accepts **raw values** ``x`` and
+    internally computes ``log(x, base)`` to obtain the exponent.
+
     Parameters
     ----------
     x : array-like
-        Numeric values (typically already on the log scale, i.e. these
-        are the exponents).
+        Raw numeric values (not already-logged).
     base : float, optional
         Logarithmic base (default 10).
     signed : bool, optional
-        If ``True``, always show sign on exponent. If ``None``, auto-detect.
+        If ``None`` (default), sign prefixes are shown when any finite
+        value is ``<= 0``.  ``True`` forces signed formatting; ``False``
+        disables it.
+    digits : int, optional
+        Significant digits for the exponent (default 3).
 
     Returns
     -------
     list of str
     """
     x_arr = np.asarray(x, dtype=float)
+    if x_arr.size == 0:
+        return []
 
+    n = x_arr.size
+    flat = x_arr.flatten()
+    prefix = [""] * n
+
+    finite = flat[np.isfinite(flat)]
     if signed is None:
-        signed = bool(np.any(x_arr[np.isfinite(x_arr)] < 0))
+        signed = bool(np.any(finite <= 0))
+
+    signs = np.zeros(n, dtype=int)
+    if signed:
+        # sign(NaN) = 0 for our purposes; don't overwrite NaNs
+        for i, v in enumerate(flat):
+            if np.isnan(v):
+                continue
+            if v > 0:
+                signs[i] = 1
+                prefix[i] = "+"
+            elif v < 0:
+                signs[i] = -1
+                prefix[i] = "-"
+            else:
+                signs[i] = 0
+        flat = np.abs(flat)
+        flat = np.where(flat == 0, 1.0, flat)
+
+    base_str = str(int(base)) if float(base).is_integer() else str(base)
+    log_base = math.log(base)
+
+    def _zapsmall(v: float, tol: float = 1e-10) -> float:
+        # Match R's zapsmall: values close to zero become exactly zero.
+        return 0.0 if abs(v) < tol else v
+
+    def _fmt_exponent(v: float) -> str:
+        v = _zapsmall(v)
+        if float(v).is_integer():
+            return str(int(v))
+        # R's format(x, digits=3) uses significant digits.
+        return f"{v:.{max(digits - 1, 0)}g}" if digits > 0 else f"{v:g}"
 
     results: list[str] = []
-    for val in x_arr.flat:
-        if not np.isfinite(val):
-            results.append("NaN" if np.isnan(val) else str(val))
+    for i, v in enumerate(flat):
+        if np.isnan(v):
+            results.append("NaN")
             continue
-        if val == 0:
-            results.append("1")
+        if np.isinf(v):
+            results.append(str(v))
             continue
-        # Express as base^val
-        exp_val = val
-        if exp_val == int(exp_val):
-            exp_str = str(int(exp_val))
-        else:
-            exp_str = str(exp_val)
-        if signed and exp_val > 0:
-            exp_str = "+" + exp_str
-        base_int = int(base) if base == int(base) else base
-        results.append(f"{base_int}^{exp_str}")
+        exponent = math.log(v) / log_base
+        exponent_str = _fmt_exponent(exponent)
+        text = f"{prefix[i]}{base_str}^{exponent_str}"
+        if signed and signs[i] == 0:
+            text = "0"
+        results.append(text)
     return results
 
 
@@ -1523,7 +1791,8 @@ def label_log(
     digits : int, optional
         Significant digits for non-integer exponents (default 3).
     signed : bool, optional
-        Show sign on exponents.
+        Show sign on exponents.  When ``None`` (default), signs appear
+        whenever any finite input is ``<= 0``.
 
     Returns
     -------
@@ -1533,24 +1802,12 @@ def label_log(
 
     def formatter(x: ArrayLike) -> list[str]:
         x_arr = np.asarray(x, dtype=float)
-        # Compute log of x in given base
-        # The input x are the actual values, convert to exponents
-        results: list[str] = []
-        for val in x_arr.flat:
-            if not np.isfinite(val):
-                results.append("NaN" if np.isnan(val) else str(val))
-                continue
-            if val <= 0:
-                results.append(str(val))
-                continue
-            exp_val = math.log(val) / math.log(base)
-            # Round if close to integer
-            if abs(exp_val - round(exp_val)) < 1e-9:
-                exp_val = round(exp_val)
-            else:
-                exp_val = round(exp_val, digits - 1)
-            results.append(format_log([exp_val], base=base, signed=signed)[0])
-        return results
+        text = format_log(x_arr, base=base, signed=signed, digits=digits)
+        # Restore NaN labels like R's label_log (ret[is.na(x)] <- NA).
+        for i, v in enumerate(x_arr.flatten()):
+            if np.isnan(v):
+                text[i] = "NaN"
+        return text
 
     return formatter
 
@@ -1808,9 +2065,13 @@ format_format = label_glue
 # ---------------------------------------------------------------------------
 
 # Module-level option store – mirrors R's `options(scales.*)` mechanism.
+# NOTE on `big_mark`: the default is an empty string rather than R's
+# figure space `" "`. This is an intentional Python divergence decided
+# 2026-04-16 so that label output round-trips through float(). Users
+# wanting R's visual style call `number_options(big_mark=" ")`.
 _NUMBER_OPTIONS: dict[str, object] = {
     "decimal_mark": ".",
-    "big_mark": " ",
+    "big_mark": "",
     "style_positive": "none",
     "style_negative": "hyphen",
     "currency_prefix": "$",
@@ -1822,7 +2083,7 @@ _NUMBER_OPTIONS: dict[str, object] = {
 
 def number_options(
     decimal_mark: str = ".",
-    big_mark: str = " ",
+    big_mark: str = "",
     style_positive: str = "none",
     style_negative: str = "hyphen",
     currency_prefix: str = "$",

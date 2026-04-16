@@ -172,10 +172,12 @@ class TestMinorBreaksLogDetail:
         assert len(result) > 4
 
     def test_reduced_detail(self):
-        mb = scales.minor_breaks_log(detail=3)
+        # Per R: detail must be in {1, 5, 10}. detail=5 places ticks at
+        # 5 * 10^k (tens + mid-decade), giving fewer than the default.
+        mb = scales.minor_breaks_log(detail=5)
         result = mb([1, 10, 100], (1, 100))
         assert len(result) >= 2
-        assert len(result) < 18  # fewer than default
+        assert len(result) < 18  # fewer than full detail=1
 
 
 # =========================================================================
@@ -701,7 +703,8 @@ class TestTransRepr:
             scales.transform_log10(), scales.transform_reverse()
         )
         r = repr(t)
-        assert "compose" in r.lower()
+        # R: composed transform name is "composition(t1,t2,...)".
+        assert "composition(" in r.lower()
 
 
 class TestAsTransformFromStrings:
