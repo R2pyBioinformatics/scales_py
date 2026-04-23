@@ -1,5 +1,7 @@
 # scales_py
 
+[![PyPI](https://img.shields.io/pypi/v/scales-python)](https://pypi.org/project/scales-python/)
+
 Python port of the R **scales** package (tracks R scales 1.4.0.9000).
 
 The Python import name is `scales`; the PyPI distribution name is `scales-python`

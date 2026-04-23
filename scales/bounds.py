@@ -7,7 +7,7 @@ Python port of ``scales::bounds.R`` from the R *scales* package
 
 from __future__ import annotations
 
-from typing import Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 import numpy as np
 
@@ -66,8 +66,15 @@ def rescale(
     x: Union[np.ndarray, list, float],
     to: _RangeLike = (0, 1),
     from_range: Optional[_RangeLike] = None,
+    **kwargs: Any,
 ) -> np.ndarray:
     """Linearly rescale a numeric vector to a new range.
+
+    R's ``scales::rescale(x, to, from)`` uses ``from`` as the input-range
+    argument. Python reserves ``from`` as a keyword, so the canonical name
+    is ``from_range`` — but for one-to-one R-to-Python translation of code
+    that does ``scales.rescale(x, to, **{"from": (0, 1)})`` we also accept
+    ``from`` via the keyword splat.
 
     Parameters
     ----------
@@ -84,6 +91,19 @@ def rescale(
     np.ndarray
         Rescaled values.
     """
+    # R-compatibility: ``scales.rescale(x, to, **{"from": r})`` works too.
+    if "from" in kwargs:
+        if from_range is not None:
+            raise TypeError(
+                "rescale(): pass either 'from_range' or 'from', not both."
+            )
+        from_range = kwargs.pop("from")
+    if kwargs:
+        raise TypeError(
+            f"rescale(): unexpected keyword argument(s): "
+            f"{sorted(kwargs)}"
+        )
+
     x = _ensure_array(x)
     x_num = _as_numeric(x)
 
@@ -101,11 +121,23 @@ def rescale(
     return (x_num - from_min) / (from_max - from_min) * (to_max - to_min) + to_min
 
 
+def _pop_from_alias(from_range, kwargs):
+    """Shared helper: accept R-style ``from=`` via ``**kwargs``."""
+    if "from" in kwargs:
+        if from_range is not None:
+            raise TypeError("pass either 'from_range' or 'from', not both.")
+        from_range = kwargs.pop("from")
+    if kwargs:
+        raise TypeError(f"unexpected keyword argument(s): {sorted(kwargs)}")
+    return from_range
+
+
 def rescale_mid(
     x: Union[np.ndarray, list, float],
     to: _RangeLike = (0, 1),
     from_range: Optional[_RangeLike] = None,
     mid: float = 0,
+    **kwargs: Any,
 ) -> np.ndarray:
     """Rescale numeric vector to new range with a specified midpoint.
 
@@ -128,6 +160,7 @@ def rescale_mid(
     np.ndarray
         Rescaled values.
     """
+    from_range = _pop_from_alias(from_range, kwargs)
     x = _ensure_array(x)
     x_num = _as_numeric(x)
 
@@ -156,6 +189,7 @@ def rescale_max(
     x: Union[np.ndarray, list, float],
     to: _RangeLike = (0, 1),
     from_range: Optional[_RangeLike] = None,
+    **kwargs: Any,
 ) -> np.ndarray:
     """Rescale numeric vector relative to its maximum.
 
@@ -173,6 +207,7 @@ def rescale_max(
     np.ndarray
         Rescaled values.
     """
+    from_range = _pop_from_alias(from_range, kwargs)
     x = _ensure_array(x)
     x_num = _as_numeric(x)
 
