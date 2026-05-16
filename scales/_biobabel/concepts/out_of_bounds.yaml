@@ -1,0 +1,35 @@
+id: scales.OutOfBounds
+name: Out-of-bounds handling (oob)
+category: data-clipping
+description: |
+  When data falls outside a scale's `limits`, the scale needs a policy for the
+  out-of-range values. scales-python ships a family of OOB handlers in the
+  `bounds` module:
+
+  - `oob_censor` — sets OOB values to NaN; ggplot drops them silently.
+  - `oob_squish` — clamps OOB values to the limits.
+  - `oob_keep` — passes OOB values through untouched (the renderer may clip).
+  - `oob_censor_any` — like `oob_censor` but for non-numeric scales.
+
+  ggplot2-python's continuous scales accept `oob=` parameter that points at
+  one of these handlers. The default is `oob_censor`, which is why setting
+  `limits=(0, 100)` silently drops out-of-range points instead of clamping —
+  a common confusion.
+
+  The helper `rescale(x, to, from_range)` is the underlying primitive used by
+  every continuous scale to map data values onto `[0, 1]` for the palette/transform.
+invariants:
+  - "`oob_censor` is the default for continuous scales — it drops OOB by setting them to NaN."
+  - "`oob_squish` clamps OOB to the nearest limit — use it when you want all data visible at the boundary."
+  - "`oob_keep` passes OOB through untouched — risky, may produce visual overflow."
+  - "Calling `rescale(x, to=(0, 1), from_range=(lo, hi))` maps `[lo, hi]` → `[0, 1]` linearly; NaN propagates."
+  - "OOB handlers run BEFORE the transform — so `log_trans` with `oob_censor` and a negative input first NaN-s it, then log-transforms NaN to NaN."
+mental_model:
+  for_r_users: |
+    Identical to R `scales::oob_*` family. Same defaults, same parameter name.
+  for_python_users: |
+    OOB is a tiny strategy pattern: `f(values, limits) → cleaned_values`.
+    The three flavors are just three closures.
+related_concepts:
+  - scales.Transform
+  - scales.Range

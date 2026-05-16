@@ -1,0 +1,25 @@
+id: scales.Range
+name: Range
+category: training
+description: |
+  A small mutable accumulator for the *trained* extent of data sent to a
+  scale. As ggplot adds layers, each layer's data is `range.train(values)`-d
+  into the shared Range; that final extent drives axis limits / palette
+  cardinality.
+
+  Two concrete kinds: `ContinuousRange` (min/max) and `DiscreteRange`
+  (ordered set of unique values).
+invariants:
+  - "`train()` is monotonic — calling it with more values only ever widens the range."
+  - "`reset()` clears accumulated state; subsequent `train()` starts fresh."
+  - "DiscreteRange preserves first-seen order across multiple `train()` calls."
+  - "After all layers are trained, the resulting limits are read once and frozen for axis rendering."
+mental_model:
+  for_r_users: |
+    R `scales::ContinuousRange$new()` / `DiscreteRange$new()`. Same method names (`train`, `reset`).
+  for_python_users: |
+    The mutability is intentional and contained. You never construct a Range
+    by hand in user code — ggplot2_py owns it. Touch Range only when writing
+    your own ggplot extension that needs cross-layer training.
+related_concepts:
+  - scales.Transform

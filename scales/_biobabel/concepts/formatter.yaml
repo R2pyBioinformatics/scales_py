@@ -1,0 +1,25 @@
+id: scales.Formatter
+name: Formatter (Labeller)
+category: presentation
+description: |
+  A callable that takes a numeric vector (axis break positions) and returns
+  the strings to put under each tick. Built via factory functions like
+  `label_number(big_mark=',', accuracy=0.01)`, `label_percent()`,
+  `label_dollar(prefix='$')`, `label_scientific()`, `label_log(base=10)`,
+  `label_pvalue()`, `label_date()`, `label_bytes()`, `label_wrap(width=20)`.
+
+  The factory pattern (same as Palette) defers the format decision until you
+  know the axis values.
+invariants:
+  - "A formatter is a callable, not a string; you pass it via `labels=` not `labels=text`."
+  - "Output length matches input length — one label per break."
+  - "Formatters compose: `label_number(scale_cut=cut_si())` ∘ `label_wrap()` is just function composition over strings."
+mental_model:
+  for_r_users: |
+    R `scales::label_number()`, `label_percent()`, etc. Identical naming and signature.
+  for_python_users: |
+    Think of it as a tiny strategy object specialized to numeric→string. The
+    closest stdlib analogue is `str.format` curried with a format spec, but
+    Formatters handle locale, accuracy, sign, and unit prefixes uniformly.
+related_concepts:
+  - scales.Palette

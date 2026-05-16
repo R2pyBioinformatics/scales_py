@@ -1,0 +1,20 @@
+id: scales.percent_dollar_formatters
+name: Format axis labels with label_percent / label_dollar / label_number with SI cut
+applicable_to:
+  - scales.Formatter
+description: |
+  For business / finance / statistics plots, the right formatter is usually a
+  one-liner. Don't roll your own string templates — the built-in formatters
+  handle locale, sign, accuracy, and unit prefixes uniformly.
+
+  Note: `label_number_si()` was deprecated in scales-python; use
+  `label_number(scale_cut=cut_si(unit))` instead. The deprecation emits a
+  `DeprecationWarning` which agent-generated code should not leak to users.
+code_template: |
+  import ggplot2_py as gg
+  from scales import label_percent, label_dollar, label_number, cut_si
+
+  gg.scale_y_continuous(labels=label_percent(accuracy=1))                 # "12%"
+  gg.scale_y_continuous(labels=label_dollar(prefix="¥"))                  # "¥1,234"
+  gg.scale_y_continuous(labels=label_number(scale_cut=cut_si()))          # "1.2M"
+typical_use_case: "percent / currency / SI-prefixed numeric axes"

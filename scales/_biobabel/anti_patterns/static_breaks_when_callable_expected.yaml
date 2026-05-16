@@ -1,0 +1,21 @@
+id: scales.static_breaks_when_callable_expected
+name: Hard-coding break positions when the scale needs a callable
+applicable_to:
+  - scales.Transform
+detection:
+  regex: 'breaks\s*=\s*\[[^\]]*\]'
+  static_only: true
+why_bad: |
+  A static list of breaks (`breaks=[1, 10, 100]`) only renders correctly
+  when the data range matches. Once the data shifts, the breaks are wrong.
+  The idiomatic way is to pass a *callable* (`breaks_log()`, `breaks_extended(n=5)`,
+  `breaks_pretty()`) that adapts to whatever range the scale ends up with.
+
+  Note: a static list is *occasionally* correct when you really do want
+  fixed positions (e.g. dates of known events). Use sparingly; document why.
+correct_pattern: scales.transform_breaks_labels_combo
+code_example_wrong: |
+  gg.scale_x_continuous(breaks=[1, 10, 100, 1000])      # ← breaks if data shifts
+code_example_right: |
+  from scales import breaks_log
+  gg.scale_x_continuous(breaks=breaks_log(n=5, base=10))

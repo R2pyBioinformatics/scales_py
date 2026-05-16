@@ -1,0 +1,36 @@
+id: scales.palette_factory_then_call
+name: "Two-step palette — factory, then call (with discrete vs continuous split)"
+applicable_to:
+  - scales.Palette
+description: |
+  Every palette is a *factory*: configure it once, then call the returned object
+  with the cardinality (discrete) or a position in `[0, 1]` (continuous).
+
+  **Discrete factories** (`pal_viridis`, `pal_brewer`, `pal_hue`, `pal_grey`,
+  `pal_manual`) → callable takes an integer `n`.
+
+  **Continuous factories** (`pal_gradient_n`, `pal_seq_gradient`, `pal_div_gradient`) →
+  callable takes a float (or array) in `[0, 1]`.
+
+  Mixing them is the #1 palette bug: `pal_viridis()(0.5)` does NOT return the
+  midpoint color — `0.5` gets silently coerced to `int(0)`. To sample viridis
+  continuously, wrap with `pal_gradient_n`.
+code_template: |
+  from scales import pal_viridis, brewer_pal, pal_seq_gradient, pal_gradient_n
+
+  # Discrete: ask for N colors
+  vir = pal_viridis(option="D")          # ← factory
+  hex8 = vir(8)                          # ← call with integer n
+
+  rdylbu = brewer_pal(palette="RdYlBu", direction=-1)
+  hex11 = rdylbu(11)
+
+  # Continuous: ask for a single color at position 0.5
+  ramp = pal_seq_gradient(low="#fff", high="#000")
+  mid = ramp(0.5)                        # ← call with float
+
+  # If you want viridis CONTINUOUSLY, wrap discrete samples in pal_gradient_n:
+  vir_continuous = pal_gradient_n(pal_viridis()(6))
+  vir_continuous(0.5)                    # ← OK now
+anti_pattern_paired: scales.calling_palette_factory_at_data_site
+typical_use_case: "any time you need N visually-distinct colors (discrete) or a single color at a position (continuous)"

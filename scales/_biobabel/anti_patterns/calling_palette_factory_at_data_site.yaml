@@ -1,0 +1,19 @@
+id: scales.calling_palette_factory_at_data_site
+name: Calling the palette factory and passing the factory itself, not its result
+applicable_to:
+  - scales.Palette
+detection:
+  regex: 'pal_(?:viridis|seq_gradient|hue|grey)\s*\(\s*\)\s*[\[\)]?'
+  static_only: true
+why_bad: |
+  `pal_viridis()` returns a *callable*, not a list of colors. Passing it
+  directly into `scale_color_manual(values=pal_viridis())` is a type error
+  — `values=` wants concrete hex strings. You must call the returned
+  callable with `n` first.
+correct_pattern: scales.palette_factory_then_call
+code_example_wrong: |
+  gg.scale_color_manual(values=pal_viridis())          # ← passes a callable
+code_example_right: |
+  gg.scale_color_manual(values=pal_viridis()(5))       # ← call with n=5
+  # or, idiomatically:
+  gg.scale_color_viridis_d(option="D")                 # ← let ggplot2_py do it

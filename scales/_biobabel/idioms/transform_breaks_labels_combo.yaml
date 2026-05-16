@@ -1,0 +1,21 @@
+id: scales.transform_breaks_labels_combo
+name: Transform + breaks + labels — the three-piece kit
+applicable_to:
+  - scales.Transform
+description: |
+  When customizing an axis, give ggplot all three pieces, not just one. A
+  `log10_trans` without `breaks_log()` produces ugly tick positions; correct
+  tick positions without `label_log()` produces awkward strings like
+  "0.001". The canonical kit is:
+code_template: |
+  import ggplot2_py as gg
+  from scales import log_trans, breaks_log, label_log
+
+  gg.ggplot(df, gg.aes(x="cells_per_ml", y="growth")) \
+      + gg.geom_point() \
+      + gg.scale_x_continuous(
+          trans=log_trans(),
+          breaks=breaks_log(n=5, base=10),
+          labels=label_log(base=10),
+      )
+typical_use_case: "any axis spanning multiple orders of magnitude"

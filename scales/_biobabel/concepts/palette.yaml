@@ -1,0 +1,43 @@
+id: scales.Palette
+name: Palette
+category: color
+description: |
+  A factory function that, given configuration, returns a callable color generator.
+  Palettes come in two flavors — **discrete** and **continuous** — with different
+  call signatures. You always *call the factory first* to get a palette object,
+  *then call that object* with the cardinality (discrete) or position (continuous).
+
+  - **Discrete palette factories** (`pal_viridis`, `pal_brewer`, `pal_hue`,
+    `pal_grey`, `pal_manual`, `pal_dichromat`, `area_pal`): the returned object
+    accepts an integer `n` and produces `n` hex strings.
+  - **Continuous palette factories** (`pal_gradient_n`, `pal_seq_gradient`,
+    `pal_div_gradient`): the returned object accepts a float (or array of floats)
+    in `[0, 1]` and produces a hex string (or list).
+
+  ggplot2_py wires `scale_color_viridis_c` to `pal_gradient_n` (samples the
+  discrete viridis into a continuous ramp) and `scale_color_viridis_d` to the
+  discrete `pal_viridis` directly. Both indirections are intentional — they let
+  the scale defer color resolution until it knows the cardinality of the data.
+invariants:
+  - "Palettes are callables that *return* colors; they are not the colors themselves."
+  - "Discrete palette objects (`pal_viridis()`, `pal_brewer()`, `pal_hue()`, `pal_grey()`, `pal_manual()`) accept an integer `n` only."
+  - "Continuous palette objects (`pal_gradient_n()`, `pal_seq_gradient()`, `pal_div_gradient()`) accept a float in `[0, 1]` (scalar or array)."
+  - "**Calling `pal_viridis()(0.5)` does NOT give you the midpoint color** — `0.5` is silently truncated to `int(0)`, returning a single-element list. Use `pal_seq_gradient(low='#fff', high='#000')(0.5)` or `pal_gradient_n(pal_viridis()(6))(0.5)` for the continuous form."
+  - "A palette must produce visually distinct colors across the requested cardinality (this is a quality invariant, not a type rule)."
+mental_model:
+  for_r_users: |
+    1:1 with R `scales::pal_viridis()`, `scales::brewer_pal()`. Same factory-then-call pattern.
+    Both R and Python keep the discrete-vs-continuous split.
+  for_python_users: |
+    Think of a discrete palette factory as `def pal(option) -> Callable[[int], list[str]]`
+    and a continuous palette factory as `def pal(...) -> Callable[[float | array], str | list[str]]`.
+    The closest matplotlib analogue is `colormaps[name]` for continuous and a manual
+    discrete list slice for discrete.
+  general: |
+    The two-step `factory → callable → colors` pattern is the source of most palette
+    bugs (see anti-pattern `scales.calling_palette_factory_at_data_site`). The other
+    common bug is calling a discrete palette with a float (see invariant 4 above).
+related_concepts:
+  - scales.Transform
+  - scales.Formatter
+  - scales.OutOfBounds

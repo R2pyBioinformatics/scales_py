@@ -56,6 +56,8 @@ Repository    = "https://github.com/Bio-Babel/scales_py"
 Issues        = "https://github.com/Bio-Babel/scales_py/issues"
 Documentation = "https://github.com/Bio-Babel/scales_py#readme"
 
+[project.entry-points."biobabel.manifest"]
+scales = "scales._biobabel:get_manifest"
 [tool.hatch.build.targets.wheel]
 packages = ["scales"]
 
@@ -74,3 +76,6 @@ exclude = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.biobabel]
+contract_class = "grammar"

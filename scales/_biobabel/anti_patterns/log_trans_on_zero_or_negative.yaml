@@ -1,0 +1,29 @@
+id: scales.log_trans_on_zero_or_negative
+name: Using log_trans on data that may contain zero or negatives
+applicable_to:
+  - scales.Transform
+detection:
+  regex: '(?:log_trans|log10_trans|log2_trans|transform_log10?|transform_log2)\s*\('
+  static_only: true
+why_bad: |
+  `log_trans()` family has domain `(0, inf)` (transforms.py:507). Calling it on
+  data containing 0 or negative values produces NaN silently. Combined with
+  the default `oob_censor` handler on the scale, those NaN points just
+  disappear from the plot — no warning, no error, just missing data.
+
+  For data that legitimately spans 0 or negatives (e.g. log-fold-changes,
+  signed magnitudes), use:
+
+  - `pseudo_log_trans(sigma=1)` — invertible over the entire real line; linear
+    near 0, log-like in the tails.
+  - `asinh_trans(sigma=1)` — similar; smooth transition through 0.
+correct_pattern: scales.pseudo_log_for_signed_data
+code_example_wrong: |
+  from scales import log10_trans
+
+  # df["log_fold_change"] contains values like -2.1, 0, +3.5
+  scale_y_continuous(transform=log10_trans())   # silently NaN-s the non-positive rows
+code_example_right: |
+  from scales import pseudo_log_trans
+
+  scale_y_continuous(transform=pseudo_log_trans(sigma=1))   # well-defined for any real x

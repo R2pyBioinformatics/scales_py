@@ -1,0 +1,30 @@
+id: scales.Transform
+name: Transform
+category: data-to-visual-mapping
+description: |
+  A bijective function pairing forward (`transform`) and inverse (`inverse`)
+  maps between data space and visual space, plus the breaks/format choices
+  best suited for that visual space. Used by ggplot scales (e.g.
+  `scale_x_log10` is sugar for "use log10 Transform").
+
+  Built-ins include `log_trans`, `log10_trans`, `log2_trans`, `sqrt_trans`,
+  `asinh_trans`, `boxcox_trans`, `pseudo_log_trans`, `date_trans`,
+  `time_trans`, `reciprocal_trans`, `reverse_trans`, `identity_trans`. Build
+  your own with `trans_new(name, transform, inverse, breaks=..., format=...)`.
+invariants:
+  - "`inverse(transform(x)) == x` to machine precision for every x in the domain."
+  - "domain endpoints (and their image under transform) must be finite — log_trans's domain excludes 0 and negatives."
+  - "A scale that uses a Transform inherits the Transform's `breaks` and `format` defaults; user-supplied values override."
+mental_model:
+  for_r_users: |
+    1:1 with R's `scales::trans_new` / `log_trans()` etc. Same names, same
+    semantics. The Python `Transform` class collects what R packs into a list.
+  for_python_users: |
+    Closest analogue is matplotlib's `ScaleBase`, but Transform is just data —
+    no matplotlib hooks. ggplot2_py is the one that interprets it.
+  general: |
+    The Transform decouples *what data to plot* from *how the axis is drawn*.
+    You can switch a scale's Transform without changing the data.
+related_concepts:
+  - scales.Palette
+  - scales.Range
