@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scales-python"
-version = "1.4.0.9000"
+version = "1.4.0.9000.post1"
 description = "Python port of the R scales package (tracks R scales 1.4.0.9000)"
 readme = "README.md"
 requires-python = ">=3.10"

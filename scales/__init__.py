@@ -1,6 +1,6 @@
 """Python port of the R scales package — scale functions for visualization."""
 
-__version__ = "1.4.0.9000"
+__version__ = "1.4.0.9000.post1"
 __r_commit__ = "04fc333"
 
 # -- Utilities ---------------------------------------------------------------
