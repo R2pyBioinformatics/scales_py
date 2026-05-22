@@ -127,17 +127,23 @@ def _log_breaks(base: float = 10, n: int = 5) -> Callable:
 
 
 def _default_format() -> Callable:
-    """Return a simple label formatter (converts to string)."""
+    """Default transform label formatter.
+
+    Mirrors R ``new_transform(format = format_format())`` (transformations.R)
+    which falls through to ``format()`` and aligns decimal precision across
+    a vector — e.g. ``c(0, 0.5, 1)`` → ``c("0.0","0.5","1.0")``, not
+    ``c("0","0.5","1")``. Delegates to :func:`label_number` so the
+    behaviour matches ``scales::label_number()`` exactly.
+    """
+    from scales.labels import label_number
+    fmt = label_number()
+
     def _fmt(x: np.ndarray) -> list[str]:
-        out: list[str] = []
-        for v in np.asarray(x).flat:
-            if np.isnan(v):
-                out.append("NA")
-            else:
-                # Remove trailing zeros for cleanliness
-                s = f"{v:g}"
-                out.append(s)
-        return out
+        arr = np.asarray(x, dtype=float)
+        if arr.size == 0:
+            return []
+        return fmt(arr)
+
     return _fmt
 
 

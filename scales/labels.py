@@ -109,23 +109,28 @@ def _format_number(
     """Format a single number with the given accuracy and marks."""
     if not np.isfinite(value):
         if np.isnan(value):
-            return "NaN"
+            # R parity: ``scales::label_number()(NaN)`` returns
+            # ``NA_character_`` which prints as "NA".
+            return "NA"
         return "Inf" if value > 0 else "-Inf"
 
-    # Number of decimal places from accuracy
+    # Number of decimal places from accuracy. The ``+ 1e-9`` nudges values
+    # like ``log10(0.1) == -1.0000000000000002`` back above ``-1`` so they
+    # floor to the expected exponent (one decimal place, not two).
     if accuracy >= 1:
         ndigits = 0
     else:
-        ndigits = max(0, -int(math.floor(math.log10(accuracy) - 1e-12)))
+        ndigits = max(0, -int(math.floor(math.log10(accuracy) + 1e-9)))
 
     rounded = round(value, ndigits)
 
-    # Format with fixed decimals
+    # Format with fixed decimals — keep trailing zeros so a break
+    # vector like [-1, -0.5, 0, 0.5] formats as ["-1.0","-0.5","0.0","0.5"]
+    # (R: formatC(format="f", digits=N) preserves trailing zeros). ``trim``
+    # mirrors R's ``formatC(trim=TRUE)`` — it strips leading whitespace
+    # from width-padded ``format()`` output, which Python's ``:.Nf`` never
+    # introduces, so the flag is a no-op here.
     formatted = f"{rounded:.{ndigits}f}"
-
-    if trim and ndigits > 0:
-        # Strip trailing zeros after decimal point
-        formatted = formatted.rstrip("0").rstrip(".")
 
     # Apply big_mark (thousands separator)
     if big_mark:

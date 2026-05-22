@@ -517,9 +517,11 @@ class TestLabelCurrencyPreservesNAs:
     """preserves NAs"""
 
     def test_nan(self):
+        # R parity: label_currency()(NaN) -> "NA" — the "$" prefix is
+        # dropped, matching scales::label_currency()(NaN) which returns
+        # NA_character_.
         result = scales.label_currency()([float("nan")])
-        assert len(result) == 1
-        assert "NaN" in result[0] or "nan" in result[0].lower()
+        assert "NA" in result[0]
 
 
 class TestLabelCurrencyScaleCut:

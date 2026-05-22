@@ -36,9 +36,9 @@ class TestLabelNumber:
         assert result == []
 
     def test_nan(self):
+        # R parity: label_number()(NaN) -> "NA" (NA_character_).
         result = scales.label_number()([np.nan])
-        assert len(result) == 1
-        assert "NaN" in result[0] or "nan" in result[0].lower()
+        assert result == ["NA"]
 
     def test_multiple(self):
         result = scales.label_number()([1, 2, 3])
@@ -165,8 +165,12 @@ class TestLabelPvalue:
         assert "0.05" in result[1]
 
     def test_known_values(self):
+        # R parity: scales::label_pvalue(accuracy=0.001) gives 3 decimal
+        # places, matching ``accuracy``. Verified with
+        # ``Rscript -e 'scales::label_pvalue()(c(0.0001,0.05,0.5,0.999))'``
+        # → c("<0.001","0.050","0.500","0.999").
         result = scales.label_pvalue()([0.0001, 0.05, 0.5, 0.999])
-        assert result == ["<0.001", "0.0500", "0.5000", "0.9990"]
+        assert result == ["<0.001", "0.050", "0.500", "0.999"]
 
 
 # ---------------------------------------------------------------------------

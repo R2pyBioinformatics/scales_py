@@ -89,7 +89,8 @@ class TestFormatNumberEdge:
         assert _format_number(float("inf"), 1, None, ".", True) == "Inf"
 
     def test_nan(self):
-        assert _format_number(float("nan"), 1, None, ".", True) == "NaN"
+        # R parity: NaN serialises to NA_character_ (printed as "NA").
+        assert _format_number(float("nan"), 1, None, ".", True) == "NA"
 
     def test_big_mark_negative_large(self):
         # Lines 136-138: negative number with big_mark
@@ -544,9 +545,10 @@ class TestLabelNumberAuto:
         assert "e" not in result[0]
 
     def test_all_nan(self):
+        # R parity: NaN -> "NA".
         fmt = label_number_auto()
         result = fmt([float("nan")])
-        assert "NaN" in result[0]
+        assert result[0] == "NA"
 
 
 # ---------------------------------------------------------------------------

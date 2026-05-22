@@ -11,6 +11,7 @@ Python port of utility functions from the R scales package
 
 from __future__ import annotations
 
+import math
 import sys
 from datetime import timedelta
 from typing import Any, Callable, Optional, Sequence, Union
@@ -319,23 +320,12 @@ def precision(x: ArrayLike) -> float:
     """
     Detect the precision of a numeric vector.
 
-    The precision is the smallest power of 10 that captures the spacing
-    between unique, finite, non-NaN values.
-
-    Parameters
-    ----------
-    x : array-like
-        Numeric values.
+    Direct port of R ``scales::precision`` (label-number.R:405-428).
 
     Returns
     -------
     float
-        Precision as a power of 10 (e.g. ``0.01`` for data with two
-        decimal places of resolution).
-
-    Notes
-    -----
-    If *x* has fewer than 2 unique finite values, returns ``1``.
+        A power of 10 ``<= 1``.
     """
     x = np.asarray(x, dtype=float)
     x = x[np.isfinite(x)]
@@ -344,24 +334,27 @@ def precision(x: ArrayLike) -> float:
     if len(x) <= 1:
         return 1.0
 
-    diffs = np.diff(np.sort(x))
-    diffs = diffs[diffs > 0]
-
-    if len(diffs) == 0:
+    smallest_diff = float(np.min(np.diff(np.sort(x))))
+    if smallest_diff < math.sqrt(np.finfo(float).eps):
         return 1.0
 
-    smallest = np.min(diffs)
+    # R: ``10^(floor(log10(smallest_diff)) - 1)``. The ``- 1`` is part of
+    # the gold algorithm — it overshoots one order of magnitude below the
+    # smallest diff, then a guard below shrinks back if all values end in
+    # a zero at that finer resolution.
+    log_val = math.log10(smallest_diff)
+    rounded = round(log_val)
+    if abs(log_val - rounded) < 1e-6:
+        log_val = float(rounded)
+    p = 10 ** (math.floor(log_val) - 1)
 
-    if smallest == 0:
-        return 1.0
+    # R guard: reduce precision when the final digit is always zero, i.e.
+    # when ``round(x / p)`` is divisible by 10 for every value.
+    scaled = np.round(x / p)
+    if np.all(scaled % 10 == 0):
+        p = p * 10
 
-    # Smallest power of 10 <= smallest diff.
-    # Round the log10 to avoid floating-point fuzz (e.g. log10(0.1) ≈ -1.0000000000000004).
-    log_val = np.log10(smallest)
-    rounded = np.round(log_val)
-    if np.abs(log_val - rounded) < 1e-6:
-        log_val = rounded
-    return float(10 ** np.floor(log_val))
+    return float(min(p, 1.0))
 
 
 # ---------------------------------------------------------------------------

@@ -111,10 +111,14 @@ class TestLogBreaksHelper:
 
 class TestDefaultFormat:
     def test_nan(self):
+        # R parity: scales::label_number()(c(NA, 1.0, 2.5)) -> c(NA, "1.0", "2.5").
+        # Smallest diff = 1.5, precision = 10^(floor(log10(1.5)) - 1) = 0.1,
+        # so all finite values render with a uniform single decimal.
         fmt = _default_format()
         result = fmt(np.array([float("nan"), 1.0, 2.5]))
         assert result[0] == "NA"
-        assert result[1] == "1"
+        assert result[1] == "1.0"
+        assert result[2] == "2.5"
 
 
 # ---------------------------------------------------------------------------
