@@ -90,8 +90,10 @@ class TestCscale:
 
 class TestTrainContinuous:
     def test_empty_no_existing(self):
-        with pytest.raises(ValueError):
-            train_continuous([float("nan")])
+        # R parity (scale-continuous.R:44-47): empty / all-NA input
+        # with no existing range returns ``None`` (R's ``NULL``), not
+        # raises. Previously asserted ``ValueError`` — Py-divergent.
+        assert train_continuous([float("nan")]) is None
 
     def test_empty_with_existing(self):
         result = train_continuous([float("nan")], existing=(0.0, 10.0))

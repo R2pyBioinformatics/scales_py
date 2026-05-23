@@ -99,26 +99,33 @@ def cscale(
 
 
 def train_continuous(
-    new: ArrayLike,
+    new: Optional[ArrayLike],
     existing: Optional[Tuple[float, float]] = None,
-) -> Tuple[float, float]:
+) -> Optional[Tuple[float, float]]:
     """Train (update) a continuous range with new data.
 
     Combines the range of *new* with an *existing* ``(min, max)`` range
     to produce an updated range that spans both.
 
+    R parity (scale-continuous.R:44-47): when *new* is ``NULL`` /
+    empty, return *existing* unchanged (``None`` if also unset). The
+    function never raises on empty input — feeding an unmapped column
+    must be a no-op, not a hard error.
+
     Parameters
     ----------
-    new : array_like
+    new : array_like or None
         New numeric observations.  Non-finite values are ignored.
+        ``None`` or empty → return *existing* unchanged.
     existing : tuple of float or None, optional
         Previously computed ``(min, max)`` range.  ``None`` indicates
         no prior range.
 
     Returns
     -------
-    tuple of float
-        Updated ``(min, max)`` range.
+    tuple of float or None
+        Updated ``(min, max)`` range, or ``None`` if neither *new* nor
+        *existing* contained any finite values.
 
     Examples
     --------
@@ -126,13 +133,18 @@ def train_continuous(
     (1.0, 5.0)
     >>> train_continuous([0, 4], existing=(1.0, 5.0))
     (0.0, 5.0)
+    >>> train_continuous(None) is None
+    True
+    >>> train_continuous([])  # empty
+    >>> train_continuous([], existing=(0.0, 10.0))
+    (0.0, 10.0)
     """
+    if new is None:
+        return existing
     new = np.asarray(new, dtype=float)
     new = new[np.isfinite(new)]
 
     if len(new) == 0:
-        if existing is None:
-            raise ValueError("Cannot train on empty data with no existing range.")
         return existing
 
     new_range = (float(np.min(new)), float(np.max(new)))

@@ -559,6 +559,10 @@ def transform_exp(base: float = np.e) -> Transform:
     ----------
     base : float, optional
         Exponent base (default ``e``).
+
+    Derivatives (R transform-numeric.R:261-262):
+    - ``d_transform(x) = base^x * log(base)``
+    - ``d_inverse(x)   = 1 / x / log(base)``
     """
     log_base = np.log(base)
 
@@ -568,11 +572,19 @@ def transform_exp(base: float = np.e) -> Transform:
     def _inv(x: np.ndarray) -> np.ndarray:
         return np.log(x) / log_base
 
+    def _d_fwd(x: np.ndarray) -> np.ndarray:
+        return base ** x * log_base
+
+    def _d_inv(x: np.ndarray) -> np.ndarray:
+        return 1.0 / x / log_base
+
     name = "exp" if base == np.e else f"power-{base:g}"
     return new_transform(
         name=name,
         transform=_fwd,
         inverse=_inv,
+        d_transform=_d_fwd,
+        d_inverse=_d_inv,
     )
 
 
@@ -663,6 +675,10 @@ def transform_asn() -> Transform:
     """Arc-sine-square-root transform: ``asin(sqrt(x))``.
 
     Domain ``[0, 1]``.
+
+    Derivatives (R transform-numeric.R:14-15):
+    - ``d_transform(x) = 1 / sqrt(x - x^2)``
+    - ``d_inverse(x)   = sin(x) / 2``
     """
     def _fwd(x: np.ndarray) -> np.ndarray:
         return 2.0 * np.arcsin(np.sqrt(x))
@@ -674,6 +690,8 @@ def transform_asn() -> Transform:
         name="asn",
         transform=_fwd,
         inverse=_inv,
+        d_transform=lambda x: 1.0 / np.sqrt(x - x ** 2),
+        d_inverse=lambda x: np.sin(x) / 2.0,
         domain=(0, 1),
     )
 
@@ -781,12 +799,20 @@ def transform_modulus(p: float, offset: float = 1) -> Transform:
     if offset < 0:
         raise ValueError("offset must be non-negative for modulus transform")
 
-    if p == 0:
+    # R uses ``abs(p) < 1e-7`` as the "p == 0" branch (transform-numeric.R:145).
+    if abs(p) < 1e-7:
         def _fwd(x: np.ndarray) -> np.ndarray:
             return np.sign(x) * np.log(np.abs(x) + offset)
 
         def _inv(x: np.ndarray) -> np.ndarray:
             return np.sign(x) * (np.exp(np.abs(x)) - offset)
+
+        # R transform-numeric.R:148-149
+        def _d_fwd(x: np.ndarray) -> np.ndarray:
+            return 1.0 / (np.abs(x) + offset)
+
+        def _d_inv(x: np.ndarray) -> np.ndarray:
+            return np.exp(np.abs(x))
     else:
         def _fwd(x: np.ndarray) -> np.ndarray:
             return np.sign(x) * ((np.abs(x) + offset) ** p - 1.0) / p
@@ -794,10 +820,19 @@ def transform_modulus(p: float, offset: float = 1) -> Transform:
         def _inv(x: np.ndarray) -> np.ndarray:
             return np.sign(x) * ((np.abs(x) * p + 1.0) ** (1.0 / p) - offset)
 
+        # R transform-numeric.R:153-154
+        def _d_fwd(x: np.ndarray) -> np.ndarray:
+            return (np.abs(x) + offset) ** (p - 1.0)
+
+        def _d_inv(x: np.ndarray) -> np.ndarray:
+            return (np.abs(x) * p + 1.0) ** (1.0 / p - 1.0)
+
     return new_transform(
         name=f"modulus-{p:g}-{offset:g}",
         transform=_fwd,
         inverse=_inv,
+        d_transform=_d_fwd,
+        d_inverse=_d_inv,
     )
 
 
@@ -825,17 +860,21 @@ def transform_yj(p: float) -> Transform:
       - ``p != 2``: ``-((-x + 1)^(2 - p) - 1) / (2 - p)``
       - ``p == 2``: ``-log(-x + 1)``
     """
+    eps = 1e-7
+    p_is_zero = abs(p) < eps
+    p_is_two = abs(2.0 - p) < eps
+
     def _fwd(x: np.ndarray) -> np.ndarray:
         out = np.empty_like(x, dtype=float)
         pos = x >= 0
         neg = ~pos
 
-        if p != 0:
+        if not p_is_zero:
             out[pos] = ((x[pos] + 1.0) ** p - 1.0) / p
         else:
             out[pos] = np.log(x[pos] + 1.0)
 
-        if p != 2:
+        if not p_is_two:
             out[neg] = -((-x[neg] + 1.0) ** (2.0 - p) - 1.0) / (2.0 - p)
         else:
             out[neg] = -np.log(-x[neg] + 1.0)
@@ -847,12 +886,12 @@ def transform_yj(p: float) -> Transform:
         pos = x >= 0
         neg = ~pos
 
-        if p != 0:
+        if not p_is_zero:
             out[pos] = (x[pos] * p + 1.0) ** (1.0 / p) - 1.0
         else:
             out[pos] = np.exp(x[pos]) - 1.0
 
-        if p != 2:
+        if not p_is_two:
             out[neg] = 1.0 - (-(2.0 - p) * x[neg] + 1.0) ** (1.0 / (2.0 - p))
         else:
             # Matches R's inv_neg(x) = 1 - exp(-x). For x < 0, exp(-x) > 1,
@@ -861,10 +900,54 @@ def transform_yj(p: float) -> Transform:
 
         return out
 
+    # Derivatives — R transform-numeric.R:202-230. Piecewise mirrors
+    # the forward / inverse: positive branch uses p, negative branch uses
+    # 2 - p. The two-sided join sets ``f'(0) = 1`` (R's ``f_at_0 = 1``)
+    # because both branches give the limit of 1 there.
+    def _d_fwd(x: np.ndarray) -> np.ndarray:
+        out = np.empty_like(x, dtype=float)
+        pos = x > 0
+        neg = x < 0
+        zero = x == 0
+
+        if not p_is_zero:
+            out[pos] = (x[pos] + 1.0) ** (p - 1.0)
+        else:
+            out[pos] = 1.0 / (1.0 + x[pos])
+
+        if not p_is_two:
+            out[neg] = (1.0 - x[neg]) ** (1.0 - p)
+        else:
+            out[neg] = 1.0 / (1.0 - x[neg])
+
+        out[zero] = 1.0
+        return out
+
+    def _d_inv(x: np.ndarray) -> np.ndarray:
+        out = np.empty_like(x, dtype=float)
+        pos = x > 0
+        neg = x < 0
+        zero = x == 0
+
+        if not p_is_zero:
+            out[pos] = (p * x[pos] + 1.0) ** (1.0 / p - 1.0)
+        else:
+            out[pos] = np.exp(x[pos])
+
+        if not p_is_two:
+            out[neg] = (-(2.0 - p) * x[neg] + 1.0) ** (1.0 / (2.0 - p) - 1.0)
+        else:
+            out[neg] = np.exp(-x[neg])
+
+        out[zero] = 1.0
+        return out
+
     return new_transform(
         name=f"yeo-johnson-{p:g}",
         transform=_fwd,
         inverse=_inv,
+        d_transform=_d_fwd,
+        d_inverse=_d_inv,
     )
 
 
@@ -892,6 +975,10 @@ def transform_pseudo_log(
     -----
     Forward: ``asinh(x / (2 * sigma)) / log(base)``.
     Inverse: ``2 * sigma * sinh(x * log(base))``.
+
+    Derivatives (R transform-numeric.R:372-373):
+    - ``d_transform(x) = 1 / (sqrt(4 + x^2 / sigma^2) * sigma * log(base))``
+    - ``d_inverse(x)   = 2 * sigma * cosh(x * log(base)) * log(base)``
     """
     log_base = np.log(base)
 
@@ -901,10 +988,18 @@ def transform_pseudo_log(
     def _inv(x: np.ndarray) -> np.ndarray:
         return 2.0 * sigma * np.sinh(x * log_base)
 
+    def _d_fwd(x: np.ndarray) -> np.ndarray:
+        return 1.0 / (np.sqrt(4.0 + x ** 2 / sigma ** 2) * sigma * log_base)
+
+    def _d_inv(x: np.ndarray) -> np.ndarray:
+        return 2.0 * sigma * np.cosh(x * log_base) * log_base
+
     return new_transform(
         name="pseudo_log",
         transform=_fwd,
         inverse=_inv,
+        d_transform=_d_fwd,
+        d_inverse=_d_inv,
     )
 
 
@@ -997,22 +1092,14 @@ logit_trans = transform_logit
 def transform_probit() -> Transform:
     """Probit transform (normal quantile function).
 
+    R: ``transform_probit <- function() transform_probability("norm")``
+    (transform-numeric.R:412). Mirror that delegation so derivatives
+    propagate uniformly from :func:`transform_probability` — previously
+    a hand-rolled wrapper that dropped ``d_transform`` / ``d_inverse``.
+
     Domain ``(0, 1)``.  Requires ``scipy``.
     """
-    try:
-        from scipy.stats import norm as _norm
-    except ImportError as exc:
-        raise ImportError(
-            "transform_probit requires scipy. "
-            "Install it with: pip install scipy"
-        ) from exc
-
-    return new_transform(
-        name="probit",
-        transform=lambda x: _norm.ppf(x),
-        inverse=lambda x: _norm.cdf(x),
-        domain=(0, 1),
-    )
+    return transform_probability("norm")
 
 
 probit_trans = transform_probit

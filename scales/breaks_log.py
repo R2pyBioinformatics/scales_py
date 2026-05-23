@@ -42,6 +42,10 @@ def _log_sub_breaks(
     :func:`scales.breaks.breaks_extended` when no admissible set is
     found.
     """
+    # See ``breaks_log`` for why this coercion matters; mirrored here so
+    # internal callers that hit ``_log_sub_breaks`` directly also get
+    # the float-base treatment.
+    base = float(base)
     lo = math.floor(rng[0])
     hi = math.ceil(rng[1])
     if base <= 2:
@@ -119,6 +123,13 @@ def breaks_log(
     callable
         A function ``(x) -> numpy.ndarray`` of break positions.
     """
+    # Coerce once at the public entry. Numpy refuses
+    # ``int ** np.array([-5, -4, ...])`` (negative integer powers
+    # require a float base), so callers who pass ``base=10`` get
+    # ValueError on sub-unary ranges like ``[1e-5, 1e-4]`` unless we
+    # promote here. ``_log_sub_breaks`` does its own promotion at the
+    # corresponding entry point.
+    base = float(base)
 
     def _breaks(x: ArrayLike) -> np.ndarray:
         x_arr = np.asarray(x, dtype=float)
@@ -136,9 +147,35 @@ def breaks_log(
 
         by = math.floor((hi - lo) / n) + 1
         while by >= 1:
-            powers = np.arange(lo, hi + by, by)
+            # R's ``seq(lo, hi, by=by)`` is inclusive-stop and never
+            # overshoots ``hi``. ``np.arange(lo, hi + by, by)`` does
+            # overshoot — e.g. on ``lo=-5, hi=0, by=2`` it yields
+            # ``[-5,-3,-1,1]`` instead of ``[-5,-3,-1]``. The phantom
+            # tick at 1 then falls outside the data range, fails the
+            # ``n-2`` check, and forces the loop into ``by-=1`` —
+            # producing too-dense breaks (6 instead of 3 on
+            # ``(1e-5, 1)``). Compute the inclusive arithmetic
+            # progression directly to match R.
+            #
+            # Use ``dtype=float`` for the powers array — numpy's
+            # ``float ** int64`` path uses an intermediate-precision
+            # algorithm that emits e.g. ``9.999999999999999e-06``
+            # instead of the exact ``1e-05`` you get from
+            # ``float ** float``. Without this, the ``base^rng[0] <=
+            # breaks`` mask spuriously drops the data-min tick.
+            n_steps = int(math.floor((hi - lo) / by)) + 1
+            powers = lo + by * np.arange(n_steps, dtype=float)
             breaks = base ** powers
-            mask = (base ** rng[0] <= breaks) & (breaks <= base ** rng[1])
+            # R: ``base^rng[1] <= breaks & breaks <= base^rng[2]``. Use
+            # ``np.power`` on the mask bounds so they share the same
+            # numpy ufunc precision as ``breaks``. Mixing Python's
+            # built-in ``**`` (used by ``base ** scalar``) with
+            # numpy's array-power makes ``10.0 ** -5.0 == 1e-05`` from
+            # Python but ``9.999999999999999e-06`` from numpy — the
+            # ``data_min <= break_min`` then spuriously fails and the
+            # loop falls through to a denser ``by``.
+            mask_lo, mask_hi = np.power(base, [rng[0], rng[1]])
+            mask = (mask_lo <= breaks) & (breaks <= mask_hi)
             if int(np.sum(mask)) >= (n - 2):
                 return breaks
             by -= 1

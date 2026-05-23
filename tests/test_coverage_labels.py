@@ -184,12 +184,16 @@ class TestFormatScientificSingle:
         assert _format_scientific_single(float("inf"), 3, ".", True) == "Inf"
 
     def test_zero_trim(self):
+        # R parity: ``format(0, scientific=TRUE)`` always returns
+        # ``"0e+00"`` regardless of ``digits`` or ``trim``. Previously
+        # this asserted the (R-divergent) bare ``"0"`` Py was producing.
         result = _format_scientific_single(0, 3, ".", True)
-        assert result == "0"
+        assert result == "0e+00"
 
     def test_zero_no_trim(self):
         result = _format_scientific_single(0, 3, ".", False)
         assert "e" in result
+        assert result == "0e+00"
 
     def test_decimal_mark_comma(self):
         result = _format_scientific_single(1234.5, 3, ",", True)

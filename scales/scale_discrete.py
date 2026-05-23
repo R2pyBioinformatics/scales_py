@@ -93,21 +93,25 @@ def dscale(
 
 
 def train_discrete(
-    new: Union[ArrayLike, Sequence],
+    new: Union[ArrayLike, Sequence, None],
     existing: Optional[List] = None,
     drop: bool = False,
     na_rm: bool = False,
-) -> list:
+    fct: Optional[bool] = None,
+) -> Optional[list]:
     """Train (update) a discrete range with new data.
 
     Combines the unique levels of *new* with an *existing* level list
-    to produce an updated set of levels (preserving order of first
-    appearance).
+    to produce an updated set of levels.  R parity
+    (``scale-discrete.R:30-97``): the ``fct`` argument is a three-state
+    control on whether the union is treated as factor-ordered or
+    sorted-character.
 
     Parameters
     ----------
-    new : array_like or sequence
-        New discrete observations.
+    new : array_like, sequence, or None
+        New discrete observations.  ``None`` short-circuits and
+        returns *existing* unchanged (R: ``if (is.null(new)) existing``).
     existing : list or None, optional
         Previously computed list of levels.  ``None`` indicates no
         prior levels.
@@ -117,11 +121,22 @@ def train_discrete(
     na_rm : bool, optional
         If ``True``, ``None`` / ``NaN`` values are removed from the
         result (default ``False``).
+    fct : bool or None, optional
+        Three-state factor-control matching R's ``fct = NA`` default.
+
+        * ``None`` (default, R's ``NA``) — detect from input types
+          (Categorical / pandas factor → preserve order, plain
+          character / numeric → sort).
+        * ``True`` — force factor semantics: preserve combined order
+          even when neither side is a Categorical.
+        * ``False`` — force non-factor: sort the union alphabetically
+          even if one side was a Categorical.
 
     Returns
     -------
-    list
-        Updated list of unique levels.
+    list or None
+        Updated list of unique levels, or ``None`` if *new* is ``None``
+        and *existing* is also ``None``.
 
     Examples
     --------
@@ -129,50 +144,126 @@ def train_discrete(
     ['a', 'b', 'c']
     >>> train_discrete(["b", "d"], existing=["a", "b", "c"])
     ['a', 'b', 'c', 'd']
+    >>> train_discrete(None, existing=["a", "b"]) == ["a", "b"]
+    True
+    >>> train_discrete(["c", "a", "b"], fct=True)  # preserve insert order
+    ['c', 'a', 'b']
     """
-    # Extract levels from new data.
-    # R semantics: non-factor input is `sort(unique(...))`; Categorical
-    # (factor) input preserves its defined order.
-    existing_is_factor = hasattr(existing, "categories")
+    # R scale-discrete.R:38-40 — NULL new returns existing unchanged.
+    if new is None:
+        return existing
+
+    # R scale-discrete.R:54-97 ``discrete_range``. Faithful port:
+    #
+    #   new_is_factor <- is.factor(new)                            # line 56
+    #   old_is_factor <- is.factor(old) || isTRUE(fct)             # line 57
+    #   new          <- clevels(new, drop, na.rm)                  # line 58
+    #   if (is.null(old)) return(new)
+    #
+    #   if (old_is_factor && !is.factor(old)) old <- factor(old,old)
+    #   if (!is.character(old))               old <- clevels(old, na.rm)
+    #   else                                  old <- sort(old, na.last=...)
+    #
+    #   # Richer side becomes primary
+    #   if (new_is_factor && !old_is_factor) { swap(old, new); swap(flags) }
+    #
+    #   new_levels <- setdiff(new, old)
+    #   if (length(new_levels) == 0) return(old)
+    #   range <- c(old, new_levels)
+    #   if (old_is_factor) return(range)
+    #   sort(range, na.last = ...)
     new_is_factor = hasattr(new, "categories")
-
-    if new_is_factor:
-        if drop:
-            new = new.remove_unused_categories()
-        new_levels = list(new.categories)
-    else:
-        arr = np.asarray(new)
-        seen: set = set()
-        uniq: list = []
-        for val in arr.flat:
-            key = _na_key(val)
-            if key not in seen:
-                seen.add(key)
-                uniq.append(val)
-        new_levels = uniq
-
-    if na_rm:
-        new_levels = [v for v in new_levels if not _is_na(v)]
+    old_is_factor = hasattr(existing, "categories") or (fct is True)
+    new_levels = _clevels(new, drop=drop, na_rm=na_rm)
 
     if existing is None:
-        if new_is_factor:
-            return new_levels
-        # Non-factor: sort alphabetically per R's clevels().
-        return sorted(new_levels, key=lambda v: (v is None, str(v)))
+        return new_levels
 
-    existing_keys = {_na_key(v) for v in existing}
-    merged = list(existing)
-    for v in new_levels:
-        key = _na_key(v)
-        if key not in existing_keys:
-            existing_keys.add(key)
-            merged.append(v)
+    # Normalise ``old`` into a level list.  Dispatch order matters —
+    # Categoricals trip ``_is_character_only`` too (their elements *are*
+    # strings), so a real factor must be caught first.
+    if hasattr(existing, "categories"):
+        # Real factor — ``clevels`` preserves category order regardless
+        # of ``fct``.  ``fct=False`` does NOT downgrade a real factor.
+        old_levels = _clevels(existing, na_rm=na_rm)
+    elif old_is_factor:
+        # ``fct=TRUE`` on a plain list — R's ``factor(old, old)`` step
+        # treats list-as-given as the factor's level order.
+        old_levels = list(existing)
+        if na_rm:
+            old_levels = [v for v in old_levels if not _is_na(v)]
+    elif _is_character_only(existing):
+        # Plain character existing — R line 71: ``sort(old, na.last=...)``.
+        old_levels = sorted(existing, key=lambda v: (v is None, str(v)))
+        if na_rm:
+            old_levels = [v for v in old_levels if not _is_na(v)]
+    else:
+        # Numeric / mixed non-character non-factor — clevels (sort+unique).
+        old_levels = _clevels(existing, na_rm=na_rm)
 
-    # When neither side is a factor, R re-sorts the union.
-    if not (existing_is_factor or new_is_factor):
-        merged = sorted(merged, key=lambda v: (v is None, str(v)))
+    # R lines 79-86 — "if new is more rich than old it becomes the primary".
+    # When ``new`` is a factor but ``old`` is not, the factor's level order
+    # wins.  This is implemented as a swap of (old, new) and their flags.
+    if new_is_factor and not old_is_factor:
+        old_levels, new_levels = new_levels, old_levels
+        old_is_factor, new_is_factor = True, False
 
-    return merged
+    # R line 88: ``new_levels <- setdiff(new, old)``.
+    old_keys = {_na_key(v) for v in old_levels}
+    appended = [v for v in new_levels if _na_key(v) not in old_keys]
+    if len(appended) == 0:
+        return old_levels
+
+    range_ = list(old_levels) + appended
+
+    # R line 95: ``if (old_is_factor) return(range)`` — factor side wins,
+    # no resort.  Otherwise the union is sorted alphabetically.
+    if old_is_factor:
+        return range_
+    range_ = sorted(range_, key=lambda v: (v is None, str(v)))
+    if na_rm:
+        range_ = [v for v in range_ if not _is_na(v)]
+    return range_
+
+
+def _clevels(
+    x: Union[ArrayLike, Sequence],
+    drop: bool = False,
+    na_rm: bool = False,
+) -> list:
+    """Port of R ``clevels()`` — factor levels, or sorted-uniques for
+    non-factor input.  R reference: scale-discrete.R:99-116."""
+    if hasattr(x, "categories"):
+        if drop:
+            x = x.remove_unused_categories()
+        levs = list(x.categories)
+        # R: ``if (!na.rm && any(is.na(x))) levs <- c(levs, NA)``
+        if not na_rm:
+            arr = np.asarray(x)
+            if any(_is_na(v) for v in arr.flat):
+                levs.append(None)
+        return levs
+    arr = np.asarray(x)
+    seen: set = set()
+    uniq: list = []
+    for val in arr.flat:
+        key = _na_key(val)
+        if key not in seen:
+            seen.add(key)
+            uniq.append(val)
+    if na_rm:
+        uniq = [v for v in uniq if not _is_na(v)]
+    return sorted(uniq, key=lambda v: (v is None, str(v)))
+
+
+def _is_character_only(seq: Sequence) -> bool:
+    """True iff every non-NA element is a string (R: ``is.character``)."""
+    for v in seq:
+        if _is_na(v):
+            continue
+        if not isinstance(v, str):
+            return False
+    return True
 
 
 # ---------------------------------------------------------------------------

@@ -746,9 +746,12 @@ def _format_scientific_single(
         return "Inf" if value > 0 else "-Inf"
 
     if value == 0:
-        if trim:
-            return "0"
-        return f"0.{'0' * (digits - 1)}e+00"
+        # R `format(0, scientific = TRUE)` always returns "0e+00" regardless of
+        # ``digits`` or ``trim`` (verified across digits ∈ {1,3,5} × trim ∈
+        # {TRUE,FALSE} via ``label_scientific(...)(0)``). Mirror that
+        # so axis labels containing 0 don't display as bare "0" while
+        # neighbours show in scientific form.
+        return "0e+00"
 
     exp = int(math.floor(math.log10(abs(value))))
     coeff = value / (10.0 ** exp)
